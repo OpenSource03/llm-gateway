@@ -29,6 +29,10 @@ jobs:
         with:
           languages: javascript-typescript
       - uses: github/codeql-action/analyze@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+        with:
+          # Personal private repositories cannot receive GitHub code-scanning uploads.
+          # Keep analysis enabled locally; upload where the repository supports it.
+          upload: ${{ !github.event.repository.private }}
 
   dependencies:
     runs-on: ubuntu-latest
