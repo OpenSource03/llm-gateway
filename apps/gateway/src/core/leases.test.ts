@@ -25,6 +25,20 @@ const waitForAbort = (signal: AbortSignal): Promise<void> =>
         signal.addEventListener("abort", () => resolve(), { once: true }),
       );
 
+const waitUntil = async (
+  predicate: () => boolean,
+  timeoutMs = 250,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out while waiting for the expected condition");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+};
+
 test("adapter-wrapped PostgreSQL serialization conflicts are normal contention", () => {
   assert.equal(
     isLeaseContentionError({
@@ -112,7 +126,7 @@ test("heartbeats continue for a slow operation without overlapping", async () =>
     },
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 24));
+  await waitUntil(() => heartbeatCalls >= 3);
   assert.equal(guard.signal.aborted, false);
   assert.ok(heartbeatCalls >= 3);
   assert.equal(maximumConcurrentHeartbeats, 1);
