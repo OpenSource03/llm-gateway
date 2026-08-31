@@ -38,7 +38,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/opensource03/llm-gateway-migrator:${{ github.ref_name }}
-      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Sign images with GitHub OIDC
         run: |
           cosign sign --yes ghcr.io/opensource03/llm-gateway@${{ steps.runtime.outputs.digest }}
