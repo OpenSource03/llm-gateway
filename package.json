@@ -1,0 +1,43 @@
+{
+  "name": "llm-gateway-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted, provider-extensible subscription LLM gateway",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@8.15.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "corepack pnpm --filter @opensource03/llm-gateway-contracts build && corepack pnpm --filter @opensource03/llm-gateway-admin-client build && corepack pnpm --filter @opensource03/llm-gateway-server build",
+    "dev": "corepack pnpm --filter @opensource03/llm-gateway-server dev",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "corepack pnpm --filter @opensource03/llm-gateway-contracts test && corepack pnpm --filter @opensource03/llm-gateway-admin-client test && corepack pnpm --filter @opensource03/llm-gateway-server test",
+    "test:integration": "corepack pnpm --filter @opensource03/llm-gateway-server test:integration",
+    "typecheck": "corepack pnpm -r typecheck",
+    "prisma:generate": "corepack pnpm --filter @opensource03/llm-gateway-server prisma:generate",
+    "prisma:validate": "corepack pnpm --filter @opensource03/llm-gateway-server prisma:validate",
+    "prisma:migrate:dev": "corepack pnpm --filter @opensource03/llm-gateway-server prisma:migrate:dev",
+    "prisma:migrate:deploy": "corepack pnpm --filter @opensource03/llm-gateway-server prisma:migrate:deploy",
+    "postinstall": "corepack pnpm prisma:generate"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.1",
+    "eslint": "^10.9.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.68.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "deepmerge-ts@<8.0.0": "8.0.0",
+      "esbuild@<0.28.1": "0.28.2",
+      "@hono/node-server@<1.19.15": "1.19.15",
+      "valibot@<1.4.2": "1.4.2"
+    }
+  }
+}

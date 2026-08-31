@@ -1,0 +1,66 @@
+image:
+  repository: ghcr.io/opensource03/llm-gateway
+  tag: "v0.1.0"
+  pullPolicy: IfNotPresent
+
+migratorImage:
+  repository: ghcr.io/opensource03/llm-gateway-migrator
+  tag: "v0.1.0"
+
+publicBaseUrl: https://gateway.example.com
+databaseSslMode: verify-full
+legacyBasePath: /api/llm-gateway
+keyWrapper: local-rsa
+azureKeyVaultKeyId: ""
+azureManagedIdentityClientId: ""
+
+agentSdk:
+  enabled: false
+  url: ""
+  allowInsecure: false
+  apiKeySecretKey: anthropic-agent-sdk-api-key
+
+existingSecret: llm-gateway
+secretKeys:
+  databaseUrl: database-url
+  sessionHmac: session-hmac
+  localRsa: local-rsa.pem
+
+data:
+  replicas: 2
+  servicePort: 80
+  containerPort: 8080
+
+control:
+  replicas: 1
+  servicePort: 8081
+  containerPort: 8081
+
+worker:
+  replicas: 1
+
+ingress:
+  enabled: false
+  className: ""
+  host: gateway.example.com
+  annotations: {}
+  tlsSecretName: ""
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+networkPolicy:
+  enabled: true
+  controlNamespaceSelector:
+    matchLabels:
+      llm-gateway-control-access: "true"
+  controlPodSelector: {}
+
+migrations:
+  enabled: true
+  expectedHost: postgres.example.internal
+  expectedDatabase: llm_gateway

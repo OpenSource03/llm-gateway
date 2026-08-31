@@ -1,0 +1,37 @@
+{{- if .Values.migrations.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "llm-gateway.fullname" . }}-migrate-{{ .Release.Revision }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      securityContext:
+        {{- include "llm-gateway.podSecurityContext" . | nindent 8 }}
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: "{{ .Values.migratorImage.repository }}:{{ .Values.migratorImage.tag }}"
+          securityContext:
+            {{- include "llm-gateway.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: GATEWAY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: {{ .Values.secretKeys.databaseUrl }}
+            - name: GATEWAY_MIGRATION_EXPECTED_HOST
+              value: {{ .Values.migrations.expectedHost | quote }}
+            - name: GATEWAY_MIGRATION_EXPECTED_DATABASE
+              value: {{ .Values.migrations.expectedDatabase | quote }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+{{- end }}

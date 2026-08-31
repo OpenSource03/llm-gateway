@@ -1,0 +1,51 @@
+services:
+  agent-sdk-init:
+    image: busybox:1.37.0
+    user: root
+    command:
+      - sh
+      - -ceu
+      - chown -R ${GATEWAY_UID:-1000}:${GATEWAY_GID:-1000} /state
+    volumes:
+      - agent-sdk-state:/state
+    restart: "no"
+
+  agent-sdk:
+    build:
+      context: ../..
+      dockerfile: deploy/agent-sdk/Dockerfile
+      args:
+        MERIDIAN_VERSION: 1.65.0
+    environment:
+      MERIDIAN_API_KEY: ${GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY:?set GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY}
+      MERIDIAN_PASSTHROUGH: "1"
+      MERIDIAN_SUPPRESS_SCRATCHPAD: "1"
+    user: "${GATEWAY_UID:-1000}:${GATEWAY_GID:-1000}"
+    depends_on:
+      agent-sdk-init:
+        condition: service_completed_successfully
+    volumes:
+      - ${CLAUDE_CONFIG_DIR:?set CLAUDE_CONFIG_DIR}:/home/node/.claude
+      - agent-sdk-state:/home/node/.config/meridian
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /home/node/.cache:size=64m,mode=0700,uid=${GATEWAY_UID:-1000},gid=${GATEWAY_GID:-1000}
+      - /home/node/.local/share:size=64m,mode=0700,uid=${GATEWAY_UID:-1000},gid=${GATEWAY_GID:-1000}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  gateway:
+    environment:
+      GATEWAY_ANTHROPIC_AGENT_SDK_URL: http://agent-sdk:3456
+      GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY: ${GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY:?set GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY}
+      GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE: "true"
+    depends_on:
+      agent-sdk:
+        condition: service_healthy
+
+volumes:
+  agent-sdk-state:

@@ -1,0 +1,79 @@
+name: llm-gateway
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-llm_gateway}
+      POSTGRES_USER: ${POSTGRES_USER:-llm_gateway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-llm_gateway} -d ${POSTGRES_DB:-llm_gateway}",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ../..
+      target: migrator
+    environment:
+      GATEWAY_DATABASE_URL: postgresql://${POSTGRES_USER:-llm_gateway}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-llm_gateway}
+      GATEWAY_DATABASE_SSL_MODE: disable
+      GATEWAY_MIGRATION_EXPECTED_HOST: postgres
+      GATEWAY_MIGRATION_EXPECTED_DATABASE: ${POSTGRES_DB:-llm_gateway}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  gateway:
+    build:
+      context: ../..
+      target: runtime
+    environment:
+      NODE_ENV: production
+      GATEWAY_DATABASE_URL: postgresql://${POSTGRES_USER:-llm_gateway}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-llm_gateway}
+      GATEWAY_DATABASE_SSL_MODE: disable
+      GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-http://localhost:8080}
+      GATEWAY_SESSION_HMAC_SECRET: ${GATEWAY_SESSION_HMAC_SECRET:?set GATEWAY_SESSION_HMAC_SECRET}
+      GATEWAY_KEY_WRAPPER: local-rsa
+      GATEWAY_LOCAL_RSA_KEY_PATH: /run/secrets/llm-gateway-wrap-key.pem
+      GATEWAY_ROLE: all
+      GATEWAY_CONTROL_HOST: 0.0.0.0
+    user: "${GATEWAY_UID:-1000}:${GATEWAY_GID:-1000}"
+    ports:
+      - "${GATEWAY_DATA_PORT:-8080}:8080"
+      - "127.0.0.1:${GATEWAY_CONTROL_PORT:-8081}:8081"
+    volumes:
+      - ${GATEWAY_LOCAL_RSA_KEY_PATH:?set GATEWAY_LOCAL_RSA_KEY_PATH}:/run/secrets/llm-gateway-wrap-key.pem:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

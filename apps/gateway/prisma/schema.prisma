@@ -1,0 +1,482 @@
+// Standalone LLM Gateway schema. This database is the service's only durable
+// dependency and must never be shared with an integrating application's domain
+// schema. External actor identifiers are opaque audit attributes.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum GatewayAccountStatus {
+  ACTIVE
+  REAUTH_REQUIRED
+  ERROR
+}
+
+enum GatewayOAuthFlow {
+  AUTHORIZATION_CODE
+  DEVICE_CODE
+}
+
+enum GatewayOAuthAttemptStatus {
+  PENDING
+  AUTHORIZED
+  FAILED
+  EXPIRED
+  CONSUMED
+}
+
+enum GatewayRoutingPolicy {
+  QUOTA_BALANCED
+  WEIGHTED_SHARE
+  LEAST_UTILIZED
+  PRIORITY_FAILOVER
+}
+
+enum GatewayQuotaSource {
+  POLL
+  RESPONSE_HEADER
+}
+
+enum GatewayUsageScope {
+  ACCOUNT
+  CLIENT_KEY
+  ROUTING_POOL
+}
+
+enum GatewayLeaseKind {
+  TOKEN_REFRESH
+  MODEL_DISCOVERY
+  QUOTA_REFRESH
+  ACCOUNT_CONCURRENCY
+  CLIENT_CONCURRENCY
+  HOUSEKEEPING
+}
+
+/// One upstream consumer-subscription identity. `identityKey` is constructed
+/// from stable upstream account/workspace identifiers, never from email alone.
+model GatewayProviderAccount {
+  id                        String               @id @default(uuid())
+  provider                  String
+  identityKey               String
+  externalAccountId         String
+  externalWorkspaceId       String?
+  email                     String?
+  displayName               String?
+  workspaceName             String?
+  planType                  String?
+  /// Execution transport is selected per account. `direct` remains the default.
+  transportMode             String               @default("direct")
+  /// Opaque profile identifier owned by the configured external transport.
+  transportProfileId        String?
+  enabled                   Boolean              @default(true)
+  status                    GatewayAccountStatus @default(ACTIVE)
+  healthReason              String?
+  maxConcurrency            Int?
+  dailyRequestCap           Int?
+  dailyInputTokenCap        BigInt?
+  dailyOutputTokenCap       BigInt?
+  cooldownUntil             DateTime?
+  lastAuthenticatedAt       DateTime?
+  lastSuccessfulRequestAt   DateTime?
+  lastQuotaRefreshAt        DateTime?
+  nativeModelCatalog        Json?
+  nativeModelCatalogEtag    String?
+  lastModelCatalogRefreshAt DateTime?
+  createdByActorId          String?
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+
+  credential      GatewayProviderCredential?
+  accountModels   GatewayAccountModel[]
+  poolMemberships GatewayRoutingPoolMember[]
+  sessionRoutes   GatewaySessionRoute[]
+  quotaSnapshots  GatewayQuotaSnapshot[]
+
+  @@unique([provider, identityKey])
+  @@index([provider, enabled, status])
+  @@index([provider, transportMode, enabled, status])
+  @@index([cooldownUntil])
+}
+
+/// Envelope-encrypted OAuth token bundle. The plaintext is a versioned JSON
+/// object containing access/refresh tokens and provider-specific token data.
+/// Every row has its own AES-256-GCM data key, wrapped by the exact key-wrapper
+/// identity recorded with the envelope.
+model GatewayProviderCredential {
+  id                    String    @id @default(uuid())
+  accountId             String    @unique
+  ciphertext            Bytes
+  nonce                 Bytes
+  authTag               Bytes
+  wrappedDataKey        Bytes
+  keyWrapperId          String
+  encryptionAlgorithm   String    @default("AES-256-GCM+RSA-OAEP-256")
+  envelopeVersion       Int       @default(1)
+  revision              Int       @default(1)
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  lastRefreshedAt       DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  account GatewayProviderAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+/// Short-lived, single-use PKCE or device-authorization transaction. Verifiers,
+/// device codes, user codes, and provider state live only in the encrypted
+/// payload. Hashes provide lookup without exposing those values at rest.
+model GatewayOAuthAttempt {
+  id                     String                    @id @default(uuid())
+  provider               String
+  flow                   GatewayOAuthFlow
+  status                 GatewayOAuthAttemptStatus @default(PENDING)
+  stateHash              String?                   @unique
+  pollSecretHash         String?                   @unique
+  verificationUri        String?
+  ciphertext             Bytes
+  nonce                  Bytes
+  authTag                Bytes
+  wrappedDataKey         Bytes
+  keyWrapperId           String
+  encryptionAlgorithm    String                    @default("AES-256-GCM+RSA-OAEP-256")
+  envelopeVersion        Int                       @default(1)
+  createdByActorId       String
+  pollingIntervalSeconds Int?
+  nextPollAt             DateTime?
+  expiresAt              DateTime
+  consumedAt             DateTime?
+  failureCode            String?
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+
+  @@index([createdByActorId, status])
+  @@index([status, expiresAt])
+}
+
+/// Canonical public model catalog. A public model ID is provider-qualified;
+/// aliases are separate records so changing an alias never changes history.
+model GatewayModel {
+  id              String          @id @default(uuid())
+  provider        String
+  upstreamModelId String
+  publicModelId   String          @unique
+  displayName     String
+  description     String?
+  contextWindow   Int?
+  maxOutputTokens Int?
+  capabilities    Json
+  enabled         Boolean         @default(true)
+  catalogSource   String
+  catalogVersion  String?
+  discoveredAt    DateTime        @default(now())
+  lastSeenAt      DateTime        @default(now())
+  staleAfter      DateTime?
+  routingPoolId   String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  routingPool    GatewayRoutingPool?     @relation(fields: [routingPoolId], references: [id], onDelete: SetNull)
+  aliases        GatewayModelAlias[]
+  accountModels  GatewayAccountModel[]
+  clientKeys     GatewayClientKeyModel[]
+  sessionRoutes  GatewaySessionRoute[]
+  quotaSnapshots GatewayQuotaSnapshot[]
+
+  @@unique([provider, upstreamModelId])
+  @@index([provider, enabled])
+  @@index([routingPoolId])
+}
+
+model GatewayModelAlias {
+  id        String   @id @default(uuid())
+  alias     String   @unique
+  modelId   String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  model GatewayModel @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([modelId])
+}
+
+model GatewayAccountModel {
+  accountId         String
+  modelId           String
+  available         Boolean  @default(true)
+  unavailableReason String?
+  discoveredAt      DateTime @default(now())
+  lastSeenAt        DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  account GatewayProviderAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  model   GatewayModel           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@id([accountId, modelId])
+  @@index([modelId, available])
+}
+
+/// A pool belongs to exactly one provider. Provider/model/account agreement is
+/// also validated in application code because PostgreSQL cannot express that
+/// cross-row invariant with a normal foreign key.
+model GatewayRoutingPool {
+  id                       String               @id @default(uuid())
+  provider                 String
+  name                     String
+  policy                   GatewayRoutingPolicy @default(QUOTA_BALANCED)
+  enabled                  Boolean              @default(true)
+  stickySessions           Boolean              @default(true)
+  sessionTtlSeconds        Int                  @default(604800)
+  shortResetGraceSeconds   Int                  @default(900)
+  quotaMaxAgeSeconds       Int                  @default(900)
+  quotaPollIntervalSeconds Int                  @default(300)
+  config                   Json?
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+
+  models        GatewayModel[]
+  members       GatewayRoutingPoolMember[]
+  sessionRoutes GatewaySessionRoute[]
+
+  @@unique([provider, name])
+  @@index([provider, enabled])
+}
+
+model GatewayRoutingPoolMember {
+  id                  String   @id @default(uuid())
+  routingPoolId       String
+  accountId           String
+  enabled             Boolean  @default(true)
+  weight              Int      @default(100)
+  priority            Int      @default(100)
+  maxConcurrency      Int?
+  dailyRequestCap     Int?
+  dailyInputTokenCap  BigInt?
+  dailyOutputTokenCap BigInt?
+  maxTrafficShareBps  Int?
+  quotaRules          Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  routingPool GatewayRoutingPool     @relation(fields: [routingPoolId], references: [id], onDelete: Cascade)
+  account     GatewayProviderAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([routingPoolId, accountId])
+  @@index([accountId, enabled])
+  @@index([routingPoolId, enabled, priority])
+}
+
+/// Client-facing bearer key. Only the SHA-256 digest is stored; the `arcgw_…`
+/// secret is returned once by the management API and cannot be recovered.
+model GatewayClientKey {
+  id                  String    @id @default(uuid())
+  name                String
+  ownerLabel          String
+  ownerEmail          String?
+  keyHash             String    @unique
+  keyPrefix           String
+  enabled             Boolean   @default(true)
+  allowAllModels      Boolean   @default(false)
+  maxConcurrency      Int?
+  dailyRequestCap     Int?
+  dailyInputTokenCap  BigInt?
+  dailyOutputTokenCap BigInt?
+  createdByActorId    String
+  lastUsedAt          DateTime?
+  expiresAt           DateTime?
+  revokedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  allowedModels GatewayClientKeyModel[]
+  sessionRoutes GatewaySessionRoute[]
+
+  @@index([enabled, revokedAt, expiresAt])
+  @@index([createdByActorId])
+}
+
+model GatewayClientKeyModel {
+  clientKeyId String
+  modelId     String
+  createdAt   DateTime @default(now())
+
+  clientKey GatewayClientKey @relation(fields: [clientKeyId], references: [id], onDelete: Cascade)
+  model     GatewayModel     @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@id([clientKeyId, modelId])
+  @@index([modelId])
+}
+
+/// Cache-aware sticky assignment. `sessionHash` is an HMAC, never the raw
+/// X-Claude-Code-Session-Id value.
+model GatewaySessionRoute {
+  id                    String   @id @default(uuid())
+  clientKeyId           String
+  sessionHash           String
+  modelId               String
+  routingPoolId         String
+  accountId             String
+  lastUsedAt            DateTime @default(now())
+  expiresAt             DateTime
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  clientKey   GatewayClientKey       @relation(fields: [clientKeyId], references: [id], onDelete: Cascade)
+  model       GatewayModel           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  routingPool GatewayRoutingPool     @relation(fields: [routingPoolId], references: [id], onDelete: Cascade)
+  account     GatewayProviderAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([clientKeyId, sessionHash, modelId])
+  @@index([accountId, expiresAt])
+  @@index([expiresAt])
+}
+
+/// Normalized quota observations only. Raw provider responses and headers are
+/// deliberately never persisted.
+model GatewayQuotaSnapshot {
+  id             BigInt             @id @default(autoincrement())
+  accountId      String
+  modelId        String?
+  meterKey       String
+  windowKey      String
+  used           Float?
+  remaining      Float?
+  limit          Float?
+  utilizationBps Int?
+  resetAt        DateTime?
+  source         GatewayQuotaSource
+  estimated      Boolean            @default(false)
+  observedAt     DateTime           @default(now())
+
+  account GatewayProviderAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  model   GatewayModel?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, meterKey, windowKey, observedAt])
+  @@index([resetAt])
+  @@index([observedAt])
+}
+
+/// Inference metadata only. IDs/model names are snapshots rather than foreign
+/// keys so 90-day history survives account/key/model deletion. No prompt,
+/// output, tool argument/result, image, token, or raw header belongs here.
+model GatewayRequestLog {
+  id                String                @id @default(uuid())
+  clientKeyId       String
+  accountId         String?
+  provider          String?
+  publicModelId     String
+  upstreamModelId   String?
+  routingPolicy     GatewayRoutingPolicy?
+  sessionHash       String?
+  statusCode        Int?
+  outcome           String
+  errorClass        String?
+  retryCount        Int                   @default(0)
+  streamed          Boolean               @default(false)
+  latencyMs         Int?
+  inputTokens       BigInt?
+  outputTokens      BigInt?
+  cachedInputTokens BigInt?
+  startedAt         DateTime              @default(now())
+  completedAt       DateTime?
+
+  @@index([startedAt])
+  @@index([clientKeyId, startedAt])
+  @@index([accountId, startedAt])
+  @@index([publicModelId, startedAt])
+  @@index([outcome, startedAt])
+}
+
+/// Hourly counters support rolling caps and traffic-share decisions without
+/// scanning request history. A request increments independent ACCOUNT,
+/// CLIENT_KEY, and ROUTING_POOL scope rows.
+model GatewayUsageBucket {
+  id                BigInt            @id @default(autoincrement())
+  bucketStart       DateTime
+  scopeType         GatewayUsageScope
+  scopeId           String
+  modelId           String            @default("*")
+  requestCount      Int               @default(0)
+  errorCount        Int               @default(0)
+  retryCount        Int               @default(0)
+  inputTokens       BigInt            @default(0)
+  outputTokens      BigInt            @default(0)
+  cachedInputTokens BigInt            @default(0)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([bucketStart, scopeType, scopeId, modelId])
+  @@index([scopeType, scopeId, bucketStart])
+  @@index([bucketStart])
+}
+
+/// Cross-worker lease/slot table for rotating refresh tokens, periodic jobs,
+/// and distributed account/client concurrency. The deterministic key includes
+/// kind, resource, and slot; expired rows may be atomically claimed.
+model GatewayLease {
+  leaseKey    String           @id
+  kind        GatewayLeaseKind
+  resourceId  String
+  slot        Int              @default(0)
+  ownerId     String
+  acquiredAt  DateTime         @default(now())
+  heartbeatAt DateTime         @default(now())
+  expiresAt   DateTime
+
+  @@unique([kind, resourceId, slot])
+  @@index([expiresAt])
+  @@index([ownerId])
+}
+
+/// Gateway-management audit trail. It remains entirely inside the standalone
+/// service database rather than an integrating application's audit store.
+model GatewayControlKey {
+  id                String    @id @default(uuid())
+  name              String
+  ownerLabel        String
+  keyHash           String    @unique
+  keyPrefix         String
+  scopes            String[]
+  allowedCidrs      String[]  @default([])
+  canDelegateActors Boolean   @default(false)
+  enabled           Boolean   @default(true)
+  expiresAt         DateTime?
+  revokedAt         DateTime?
+  lastUsedAt        DateTime?
+  createdByActorId  String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([enabled, revokedAt, expiresAt])
+}
+
+model GatewayControlAuditLog {
+  id                  String   @id @default(uuid())
+  controlCredentialId String?
+  actorId             String
+  actorEmail          String?
+  actorName           String?
+  action              String
+  entityType          String
+  entityId            String?
+  method              String
+  path                String
+  before              Json?
+  after               Json?
+  status              Int
+  ip                  String?
+  userAgent           String?
+  createdAt           DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([controlCredentialId])
+}

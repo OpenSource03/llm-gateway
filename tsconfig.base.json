@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@opensource03/llm-gateway-contracts": [
+        "packages/contracts/src/index.ts"
+      ],
+      "@opensource03/llm-gateway-admin-client": [
+        "packages/admin-client/src/index.ts"
+      ]
+    }
+  }
+}

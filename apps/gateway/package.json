@@ -1,0 +1,49 @@
+{
+  "name": "@opensource03/llm-gateway-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "llmgw": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsup src/server.ts src/cli.ts --format esm --sourcemap --clean",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "cross-env NODE_ENV=test GATEWAY_DATABASE_URL=postgresql://unused:unused@127.0.0.1:1/unused GATEWAY_SESSION_HMAC_SECRET=test-only-gateway-hmac-secret-32-bytes-long GATEWAY_KEY_WRAPPER=azure-key-vault GATEWAY_AZURE_KEY_VAULT_KEY_ID=https://test-vault.vault.azure.net/keys/gateway/version-1 tsx --test --test-force-exit --test-concurrency=1 'src/**/*.test.ts'",
+    "test:integration": "cross-env NODE_ENV=test GATEWAY_DATABASE_URL=postgresql://unused:unused@127.0.0.1:1/unused GATEWAY_SESSION_HMAC_SECRET=test-only-gateway-hmac-secret-32-bytes-long GATEWAY_KEY_WRAPPER=azure-key-vault GATEWAY_AZURE_KEY_VAULT_KEY_ID=https://test-vault.vault.azure.net/keys/gateway/version-1 tsx --test --test-force-exit --test-concurrency=1 'src/**/*.test.ts'",
+    "prisma:generate": "prisma generate --config prisma.config.ts",
+    "prisma:validate": "prisma validate --config prisma.config.ts",
+    "prisma:migrate:dev": "prisma migrate dev --config prisma.config.ts",
+    "prisma:migrate:deploy": "prisma migrate deploy --config prisma.config.ts"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.13.1",
+    "@azure/keyvault-keys": "^4.10.2",
+    "@hono/node-server": "^2.1.1",
+    "@opensource03/llm-gateway-admin-client": "workspace:*",
+    "@opensource03/llm-gateway-contracts": "workspace:*",
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "7.8.0",
+    "commander": "^15.0.0",
+    "hono": "^4.12.27",
+    "ipaddr.js": "^2.4.0",
+    "pg": "^8.16.3",
+    "pino": "^10.3.1",
+    "@prometheus-io/client": "^0.16.1",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.5",
+    "cross-env": "^10.1.0",
+    "dotenv": "^17.4.2",
+    "prisma": "7.8.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.22.5",
+    "typescript": "^5.9.2"
+  }
+}

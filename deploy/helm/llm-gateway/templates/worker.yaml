@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llm-gateway.fullname" . }}-worker
+  labels:
+    {{- include "llm-gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "llm-gateway.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      securityContext:
+        {{- include "llm-gateway.podSecurityContext" . | nindent 8 }}
+      {{- if eq .Values.keyWrapper "local-rsa" }}
+      initContainers:
+        - name: prepare-local-rsa
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-ceu", "cp /source/local-rsa.pem /prepared/local-rsa.pem && chmod 0600 /prepared/local-rsa.pem"]
+          securityContext:
+            {{- include "llm-gateway.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - { name: local-rsa-source, mountPath: /source, readOnly: true }
+            - { name: local-rsa, mountPath: /prepared }
+      {{- end }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- include "llm-gateway.containerSecurityContext" . | nindent 12 }}
+          env:
+            {{- include "llm-gateway.commonEnv" . | nindent 12 }}
+            - name: GATEWAY_ROLE
+              value: worker
+            - name: GATEWAY_CONTROL_HOST
+              value: 0.0.0.0
+            - name: GATEWAY_CONTROL_PORT
+              value: "8081"
+          ports:
+            - { name: health, containerPort: 8081 }
+          readinessProbe:
+            httpGet: { path: /health/ready, port: health }
+          livenessProbe:
+            httpGet: { path: /health/live, port: health }
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            {{- if eq .Values.keyWrapper "local-rsa" }}
+            - { name: local-rsa, mountPath: /run/secrets/llm-gateway, readOnly: true }
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+        {{- if eq .Values.keyWrapper "local-rsa" }}
+        - name: local-rsa-source
+          secret:
+            secretName: {{ .Values.existingSecret }}
+            items:
+              - { key: {{ .Values.secretKeys.localRsa }}, path: local-rsa.pem, mode: 0440 }
+        - name: local-rsa
+          emptyDir: { sizeLimit: 1Mi }
+        {{- end }}

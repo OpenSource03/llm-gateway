@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public Anthropic beta feature identifier, not a credential"
+regexTarget = "secret"
+regexes = ['''interleaved-thinking-2025-05-14''']
