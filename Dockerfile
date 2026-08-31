@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-bookworm-slim AS dependencies
+FROM node:26-bookworm-slim AS dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends openssl ca-certificates && \
     rm -rf /var/lib/apt/lists/*
@@ -38,7 +38,7 @@ RUN rm -rf \
 USER node
 CMD ["node", "node_modules/prisma/build/index.js", "migrate", "deploy", "--config", "prisma.config.ts"]
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 RUN apt-get update && \
     apt-get install -y --no-install-recommends dumb-init ca-certificates && \
     rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm && \
