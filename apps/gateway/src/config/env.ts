@@ -2,6 +2,51 @@ import { z } from "zod";
 
 const roleSchema = z.enum(["data", "control", "worker", "all"]);
 const keyWrapperSchema = z.enum(["local-rsa", "azure-key-vault"]);
+const providerModelIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/);
+const agentSdkModelRewriteSchema = z
+  .array(
+    z
+      .object({
+        from: providerModelIdSchema,
+        to: providerModelIdSchema,
+        displayName: z.string().trim().min(1).max(200).optional(),
+      })
+      .strict(),
+  )
+  .max(32)
+  .superRefine((rewrites, context) => {
+    const sources = new Set<string>();
+
+    for (const [index, rewrite] of rewrites.entries()) {
+      if (sources.has(rewrite.from)) {
+        context.addIssue({
+          code: "custom",
+          path: [index, "from"],
+          message: "Model rewrite sources must be unique",
+        });
+      }
+      sources.add(rewrite.from);
+    }
+  });
+const agentSdkModelRewritesJsonSchema = z
+  .string()
+  .max(16_384)
+  .default("[]")
+  .transform((value, context): unknown => {
+    try {
+      return JSON.parse(value);
+    } catch {
+      context.addIssue({
+        code: "custom",
+        message: "Must be valid JSON",
+      });
+
+      return z.NEVER;
+    }
+  })
+  .pipe(agentSdkModelRewriteSchema);
 
 const rawEnvironment = () => ({
   NODE_ENV: process.env.NODE_ENV,
@@ -37,6 +82,8 @@ const rawEnvironment = () => ({
     process.env.GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY,
   GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE:
     process.env.GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE,
+  GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON:
+    process.env.GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON,
   LOG_LEVEL: process.env.LOG_LEVEL,
 });
 
@@ -90,6 +137,8 @@ export const envSchema = z
       .enum(["true", "false", "1", "0"])
       .default("false")
       .transform((value) => value === "true" || value === "1"),
+    GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON:
+      agentSdkModelRewritesJsonSchema,
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),

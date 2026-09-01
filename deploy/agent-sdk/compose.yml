@@ -15,7 +15,7 @@ services:
       context: ../..
       dockerfile: deploy/agent-sdk/Dockerfile
       args:
-        MERIDIAN_VERSION: 1.65.0
+        MERIDIAN_VERSION: 1.66.0
     environment:
       MERIDIAN_API_KEY: ${GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY:?set GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY}
       MERIDIAN_PASSTHROUGH: "1"
@@ -43,6 +43,7 @@ services:
       GATEWAY_ANTHROPIC_AGENT_SDK_URL: http://agent-sdk:3456
       GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY: ${GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY:?set GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY}
       GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE: "true"
+      GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON: ${GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON:-[]}
     depends_on:
       agent-sdk:
         condition: service_healthy

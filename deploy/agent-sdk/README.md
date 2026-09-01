@@ -5,10 +5,19 @@ private Meridian sidecar so selected Anthropic accounts can execute through
 Anthropic's Claude Agent SDK instead.
 
 Meridian is installed from the exact npm version pinned in the Dockerfile; its
-source is not vendored here. The checked v1.65.0 package and README declare MIT,
+source is not vendored here. The checked v1.66.0 package and README declare MIT,
 but its upstream repository did not contain a standalone license text at the
 reviewed commit. Review that status before redistributing a derived image. See
 [`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md).
+
+If a released bridge catalog temporarily lags the Claude version bundled with
+it, configure a bounded deployment-side rewrite instead of modifying or
+vendoring the bridge. Rewrites affect discovery only; the bridge must still
+support the target model and receives its explicit canonical ID at inference:
+
+```bash
+export GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON='[{"from":"claude-fable-5","to":"claude-fable-5-1","displayName":"Claude Fable 5.1"}]'
+```
 
 Generate the private bridge key and keep it outside the repository:
 

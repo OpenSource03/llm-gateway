@@ -39,6 +39,13 @@ const CONTROL_RESPONSE_LIMIT = 2 * 1024 * 1024;
 export interface AnthropicAgentSdkConfig {
   baseUrl: string;
   apiKey: string;
+  modelRewrites: readonly AgentSdkModelRewrite[];
+}
+
+export interface AgentSdkModelRewrite {
+  from: string;
+  to: string;
+  displayName?: string;
 }
 
 const configuredTransport = (): AnthropicAgentSdkConfig => {
@@ -57,6 +64,7 @@ const configuredTransport = (): AnthropicAgentSdkConfig => {
   return {
     baseUrl: env.GATEWAY_ANTHROPIC_AGENT_SDK_URL,
     apiKey: env.GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY,
+    modelRewrites: env.GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON,
   };
 };
 
@@ -141,9 +149,15 @@ const capabilitySupported = (
   return value === true || (isRecord(value) && value.supported === true);
 };
 
-export const parseAgentSdkModels = (payload: unknown): ProviderDiscovery => {
+export const parseAgentSdkModels = (
+  payload: unknown,
+  rewrites: readonly AgentSdkModelRewrite[] = [],
+): ProviderDiscovery => {
   const root = assertRecord(payload, "Agent SDK model catalog");
   const entries = Array.isArray(root.data) ? root.data : [];
+  const rewritesBySource = new Map(
+    rewrites.map((rewrite) => [rewrite.from, rewrite]),
+  );
 
   if (entries.length > MAX_PROVIDER_MODEL_ROWS) {
     throw new ProviderProtocolError(
@@ -156,8 +170,15 @@ export const parseAgentSdkModels = (payload: unknown): ProviderDiscovery => {
 
   for (const raw of entries) {
     if (!isRecord(raw)) continue;
-    const upstreamId = providerModelId(raw.id);
-    const displayName = nonEmptyString(raw.display_name) ?? upstreamId;
+    const discoveredId = providerModelId(raw.id);
+    const rewrite = discoveredId
+      ? rewritesBySource.get(discoveredId)
+      : undefined;
+    const upstreamId = providerModelId(rewrite?.to ?? discoveredId);
+    const displayName =
+      nonEmptyString(rewrite?.displayName) ??
+      nonEmptyString(raw.display_name) ??
+      upstreamId;
     const family = upstreamId?.match(/^claude-([a-z0-9]+)-/i)?.[1];
 
     if (!upstreamId || !displayName || !family || seenFamilies.has(family)) {
@@ -405,6 +426,7 @@ export class AnthropicAgentSdkTransport {
         "Agent SDK model discovery",
         CONTROL_RESPONSE_LIMIT,
       ),
+      this.#config.modelRewrites,
     );
   }
 

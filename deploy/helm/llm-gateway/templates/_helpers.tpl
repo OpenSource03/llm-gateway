@@ -55,6 +55,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
       key: {{ .Values.agentSdk.apiKeySecretKey }}
 - name: GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE
   value: {{ .Values.agentSdk.allowInsecure | quote }}
+- name: GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON
+  value: {{ .Values.agentSdk.modelRewritesJson | quote }}
 {{- end }}
 {{- end -}}
 

@@ -39,6 +39,9 @@ param agentSdkApiKey string = ''
 @description('Allow plain HTTP only when the bridge is protected by an isolated private network.')
 param agentSdkAllowInsecure bool = false
 
+@description('Bounded JSON array of corrections for stale external bridge catalog rows.')
+param agentSdkModelRewritesJson string = '[]'
+
 param publicBaseUrl string
 param migrationExpectedHost string
 param migrationExpectedDatabase string
@@ -104,6 +107,10 @@ var commonEnv = concat([
   {
     name: 'GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE'
     value: agentSdkAllowInsecure ? 'true' : 'false'
+  }
+  {
+    name: 'GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON'
+    value: agentSdkModelRewritesJson
   }
 ])
 

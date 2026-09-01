@@ -146,6 +146,47 @@ test("Agent SDK transport requires paired credentials and explicit insecure netw
   );
 });
 
+test("Agent SDK catalog rewrites are bounded and structurally validated", () => {
+  const valid = envSchema.parse(
+    runtimeEnv({
+      GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON: JSON.stringify([
+        {
+          from: "claude-fable-5",
+          to: "claude-fable-5-1",
+          displayName: "Claude Fable 5.1",
+        },
+      ]),
+    }),
+  ).GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON;
+
+  assert.deepEqual(valid, [
+    {
+      from: "claude-fable-5",
+      to: "claude-fable-5-1",
+      displayName: "Claude Fable 5.1",
+    },
+  ]);
+  assert.equal(
+    envSchema.safeParse(
+      runtimeEnv({
+        GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON: "not-json",
+      }),
+    ).success,
+    false,
+  );
+  assert.equal(
+    envSchema.safeParse(
+      runtimeEnv({
+        GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON: JSON.stringify([
+          { from: "claude-fable-5", to: "claude-fable-5-1" },
+          { from: "claude-fable-5", to: "claude-fable-6" },
+        ]),
+      }),
+    ).success,
+    false,
+  );
+});
+
 test("Prisma generation is secret-independent", () => {
   assert.equal(
     resolveDatasourceUrl({}, ["node", "prisma", "generate"]),

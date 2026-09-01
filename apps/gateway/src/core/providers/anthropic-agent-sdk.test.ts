@@ -16,6 +16,7 @@ import {
 const config = {
   baseUrl: "http://127.0.0.1:3456",
   apiKey: "test-agent-sdk-key-that-is-long-enough",
+  modelRewrites: [],
 };
 const identity = { externalAccountId: "account-1" };
 const transport = { id: "agent-sdk", profileId: "work" };
@@ -98,6 +99,46 @@ test("Agent SDK quota and profile parsing stay scoped to the selected profile", 
     }),
     { id: "default", plan: "max", authenticated: true },
   );
+});
+
+test("Agent SDK discovery can replace stale bridge model pins from deployment config", () => {
+  const discovery = parseAgentSdkModels(
+    {
+      object: "list",
+      data: [
+        {
+          id: "claude-fable-5",
+          display_name: "Claude Fable 5",
+          context_window: 1_000_000,
+        },
+      ],
+    },
+    [
+      {
+        from: "claude-fable-5",
+        to: "claude-fable-5-1",
+        displayName: "Claude Fable 5.1",
+      },
+    ],
+  );
+
+  assert.deepEqual(discovery.models[0], {
+    upstreamId: "claude-fable-5-1",
+    name: "Claude Fable 5.1",
+    contextWindow: 1_000_000,
+    inputModalities: ["text"],
+    reasoning: false,
+    reasoningEfforts: [],
+    thinkingModes: [],
+    source: "live",
+  });
+  assert.deepEqual(discovery.nativeCatalog?.entries, [
+    {
+      id: "claude-fable-5-1",
+      display_name: "Claude Fable 5.1",
+      context_window: 1_000_000,
+    },
+  ]);
 });
 
 test("Agent SDK Responses forwarding uses one Anthropic passthrough conversion", async () => {

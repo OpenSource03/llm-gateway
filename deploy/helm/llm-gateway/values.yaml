@@ -18,6 +18,7 @@ agentSdk:
   enabled: false
   url: ""
   allowInsecure: false
+  modelRewritesJson: "[]"
   apiKeySecretKey: anthropic-agent-sdk-api-key
 
 existingSecret: llm-gateway
