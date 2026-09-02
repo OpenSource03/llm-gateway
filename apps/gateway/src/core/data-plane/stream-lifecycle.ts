@@ -10,6 +10,7 @@ import {
   combinedCachedInputTokens,
   uncachedResponsesInputTokens,
 } from "../usage-accounting";
+import { withSseKeepalive } from "../wire/sse-keepalive";
 
 const LEASE_TTL_MS = 120_000;
 const LEASE_HEARTBEAT_MS = 30_000;
@@ -131,11 +132,13 @@ export const wrapStreamLifecycle = (
     },
   });
 
-  return new Response(body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
+  return withSseKeepalive(
+    new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    }),
+  );
 };
 
 export interface ObservedUsage {
