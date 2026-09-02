@@ -1,8 +1,6 @@
 import type { AnthropicMessagesRequest } from "../wire/anthropic";
 import type { CodexResponsesRequest } from "../wire/codex-responses";
 
-import { GatewayError } from "../errors";
-
 export const estimateGatewayInputTokens = (
   request: AnthropicMessagesRequest,
 ): { conservative: number; approximate: number } => {
@@ -17,8 +15,9 @@ export const estimateGatewayInputTokens = (
     // Byte length plus framing is a tokenizer-independent upper bound suitable
     // for enforcing hard client/account caps before concurrent dispatches.
     conservative: Math.max(1, bytes + 256),
-    // Context checks intentionally use the conventional estimate to reject
-    // only obviously oversized prompts, avoiding a 4x usability penalty.
+    // This conventional estimate is suitable for advisory token-count
+    // responses. It must not be used to enforce provider context limits:
+    // serialized byte size can diverge substantially from provider tokenization.
     approximate: Math.max(1, Math.ceil(bytes / 4) + 64),
   };
 };
@@ -209,21 +208,4 @@ export const estimateGatewayResponsesInputTokens = (
     conservative: Math.max(1, bytes + 256 + imageTokens),
     approximate: Math.max(1, Math.ceil(bytes / 4) + 64 + imageTokens),
   };
-};
-
-export const assertGatewayModelContext = (
-  contextWindow: number | null,
-  approximateInputTokens: number,
-  requestedOutputTokens: number,
-): void => {
-  if (
-    contextWindow !== null &&
-    approximateInputTokens + requestedOutputTokens > contextWindow
-  ) {
-    throw new GatewayError(
-      `Request exceeds this model's ${contextWindow}-token context window`,
-      400,
-      "MODEL_CONTEXT_EXCEEDED",
-    );
-  }
 };

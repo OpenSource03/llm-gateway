@@ -8,7 +8,6 @@ export { proxyCodexSearchRequest } from "./data-plane/search";
 export { countGatewayTokens } from "./data-plane/token-count";
 export { wrapStreamLifecycle } from "./data-plane/stream-lifecycle";
 export {
-  assertGatewayModelContext,
   estimateGatewayInputTokens,
   estimateGatewayResponsesInputTokens,
 } from "./data-plane/token-estimation";

@@ -27,7 +27,6 @@ import {
   routeAccount,
 } from "./routing";
 import {
-  assertGatewayModelContext,
   estimateGatewayInputTokens,
 } from "./token-estimation";
 
@@ -58,7 +57,6 @@ export const countGatewayTokens = async (input: {
   const inputEstimate = estimateGatewayInputTokens(input.request);
   const estimated = inputEstimate.conservative;
 
-  assertGatewayModelContext(model.contextWindow, inputEstimate.approximate, 0);
   const sessionId = normalizedSessionId(input.sessionHeader);
 
   if (model.provider !== "ANTHROPIC") {

@@ -40,7 +40,6 @@ import {
   wrapStreamLifecycle,
 } from "./stream-lifecycle";
 import {
-  assertGatewayModelContext,
   estimateGatewayInputTokens,
   estimateGatewayResponsesInputTokens,
 } from "./token-estimation";
@@ -106,11 +105,6 @@ const proxyGatewayRequest = async (
   const requestedOutputTokens =
     input.kind === "messages" ? input.request.max_tokens : 1;
 
-  assertGatewayModelContext(
-    model.contextWindow,
-    inputEstimate.approximate,
-    requestedOutputTokens,
-  );
   // The ChatGPT subscription backend currently rejects Responses'
   // max_output_tokens field. Reserve the discovered model maximum (or our
   // public hard maximum) so that omission can never bypass client/account

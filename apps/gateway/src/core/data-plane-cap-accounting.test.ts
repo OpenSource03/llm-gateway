@@ -4,9 +4,7 @@ import type { CodexResponsesRequest } from "./wire/codex-responses";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { GatewayError } from "./errors";
 import {
-  assertGatewayModelContext,
   currentRoutingQuotaSnapshots,
   estimateGatewayInputTokens,
   estimateGatewayResponsesInputTokens,
@@ -111,14 +109,26 @@ test("a complete poll supersedes older response-header quota windows", () => {
   );
 });
 
-test("obviously oversized prompts are rejected before routing", () => {
-  assert.throws(
-    () => assertGatewayModelContext(10_000, 9_500, 1_000),
-    (error) =>
-      error instanceof GatewayError &&
-      error.status === 400 &&
-      error.code === "MODEL_CONTEXT_EXCEEDED",
-  );
-  assert.doesNotThrow(() => assertGatewayModelContext(10_000, 8_500, 1_000));
-  assert.doesNotThrow(() => assertGatewayModelContext(null, 500_000, 1_000));
+test("Responses estimates remain advisory above a provider context limit", () => {
+  const request: CodexResponsesRequest = {
+    model: "anthropic/test",
+    instructions: "",
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "x".repeat(40_000) }],
+      },
+    ],
+    tool_choice: "auto",
+    parallel_tool_calls: true,
+    store: false,
+    stream: true,
+    include: [],
+  };
+
+  // A heuristic estimate can exceed a discovered provider limit even when the
+  // provider's tokenizer would accept the request. Enforcement therefore stays
+  // with the upstream provider; this value is only used for accounting.
+  assert.ok(estimateGatewayResponsesInputTokens(request).approximate > 10_000);
 });
