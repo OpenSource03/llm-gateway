@@ -55,8 +55,33 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: pnpm
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version-file: addons/codex-auth-bridge/go.mod
+          cache: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Build Codex auth bridge
+        working-directory: addons/codex-auth-bridge
+        run: |
+          mkdir -p /tmp/release-assets
+          for arch in arm64 amd64; do
+            asset_dir="/tmp/codex-auth-bridge-darwin-$arch"
+            mkdir -p "$asset_dir"
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" \
+              go build -trimpath -ldflags="-s -w" \
+              -o "$asset_dir/codex-auth-bridge" \
+              ./cmd/codex-auth-bridge
+            mkdir -p "$asset_dir/scripts"
+            cp README.md "$asset_dir/"
+            cp scripts/install-macos.sh scripts/uninstall-macos.sh \
+              "$asset_dir/scripts/"
+            tar -C "$asset_dir" -czf \
+              "/tmp/release-assets/codex-auth-bridge-${GITHUB_REF_NAME}-darwin-$arch.tar.gz" \
+              codex-auth-bridge README.md scripts
+          done
+          cd /tmp/release-assets
+          sha256sum codex-auth-bridge-*.tar.gz >codex-auth-bridge-checksums.txt
       - name: Pack integration packages
         run: |
           mkdir -p /tmp/release-assets

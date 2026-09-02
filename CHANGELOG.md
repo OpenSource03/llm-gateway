@@ -3,6 +3,14 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## Unreleased
+
+- Add an optional, loopback-only macOS Codex authentication bridge that keeps
+  ChatGPT Remote Control available while every model request remains routed
+  through a Keychain-authenticated LLM Gateway.
+- Keep quiet SSE responses alive with downstream comments while preserving
+  backpressure, cancellation, terminal accounting, and token-neutral behavior.
+
 ## 0.1.0
 
 - Initial standalone extraction.

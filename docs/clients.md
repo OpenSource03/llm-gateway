@@ -30,6 +30,27 @@ Do not combine `auth` with `env_key`, `experimental_bearer_token`, or
 `requires_openai_auth`. Do not put the bearer key directly in TOML. Restart
 Desktop after changing provider configuration.
 
+### Remote Control with a custom gateway
+
+Codex Desktop may hide **Control this Mac** when the active custom provider
+uses command-backed authentication. Its app-server reports no active OpenAI
+account for that provider even when Codex has a valid ChatGPT login.
+
+Use the optional
+[`codex-auth-bridge`](../addons/codex-auth-bridge/README.md) when both Remote
+Control and gateway routing are required. It lets Codex use OpenAI
+authentication locally, removes that bearer on loopback, and replaces it with
+the gateway data key from macOS Keychain. Claude, OpenAI, xAI, model discovery,
+web search, and future provider traffic still go through the gateway.
+
+The auth bridge cannot bypass ChatGPT account policy. Remote Control enrollment
+still requires the account/workspace MFA, SSO, passkey, rollout, and mobile-app
+requirements documented by OpenAI.
+
+Do not point an OpenAI-authenticated provider directly at LLM Gateway. The
+gateway deliberately does not accept a ChatGPT OAuth token as a data-plane
+key.
+
 ## Model catalog refresh
 
 Codex versions may share `models_cache.json` between providers. Restart the

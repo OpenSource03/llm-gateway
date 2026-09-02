@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: github/codeql-action/init@6f5948dfacef28e207b48d0905cf90c03365536d # v3
         with:
-          languages: javascript-typescript
+          languages: javascript-typescript,go
       - uses: github/codeql-action/analyze@6f5948dfacef28e207b48d0905cf90c03365536d # v3
         with:
           # Personal private repositories cannot receive GitHub code-scanning uploads.
@@ -47,3 +47,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level high
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version-file: addons/codex-auth-bridge/go.mod
+          cache: false
+      - name: Scan Go dependencies and standard library
+        working-directory: addons/codex-auth-bridge
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...

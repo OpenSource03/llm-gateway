@@ -84,6 +84,13 @@ It forwards client tools for execution by Claude Code or Codex, caps SDK work
 at the tool boundary, and keeps the selected profile sticky. See
 [`deploy/agent-sdk`](deploy/agent-sdk/README.md).
 
+Codex Desktop currently ties Remote Control visibility to OpenAI-authenticated
+model providers. The optional macOS
+[`codex-auth-bridge`](addons/codex-auth-bridge/README.md) preserves the local
+ChatGPT identity for Remote Control while replacing that credential with a
+Keychain-backed gateway data key before any inference request leaves loopback.
+All models continue to route through LLM Gateway.
+
 ## Five-minute Docker quick start
 
 Requirements: Docker with Compose, OpenSSL, and two free local ports (8080 and
