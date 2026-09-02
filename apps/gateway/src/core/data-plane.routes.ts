@@ -25,6 +25,19 @@ import { parseCodexSearchRequest } from "./wire/codex-search";
 
 const MAX_REQUEST_BYTES = 10 * 1024 * 1024;
 
+export const codexRequestSessionHeaders = (
+  headers: Headers,
+): { provider?: string; routing?: string } => {
+  const session = headers.get("session-id") ?? undefined;
+  const thread =
+    headers.get("thread-id") ?? headers.get("x-client-request-id") ?? undefined;
+
+  return {
+    routing: session ?? thread,
+    provider: thread ?? session,
+  };
+};
+
 const readDataPlaneJson = async (request: Request): Promise<unknown> => {
   const contentLength = Number(request.headers.get("content-length") ?? 0);
 
@@ -243,15 +256,13 @@ app.post("/v1/responses", async (c) => {
       request,
       models,
     );
-    const sessionHeader =
-      c.req.header("session-id") ??
-      c.req.header("x-client-request-id") ??
-      c.req.header("thread-id");
+    const sessionHeaders = codexRequestSessionHeaders(c.req.raw.headers);
 
     const response = await proxyResponsesRequest({
       principal: auth.principal,
       request: requestWithSpawnCatalog,
-      sessionHeader,
+      sessionHeader: sessionHeaders.routing,
+      providerSessionHeader: sessionHeaders.provider,
       signal: c.req.raw.signal,
     });
 

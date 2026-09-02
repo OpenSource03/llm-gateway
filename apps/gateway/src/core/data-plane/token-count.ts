@@ -26,9 +26,7 @@ import {
   persistGatewayHeaderQuota,
   routeAccount,
 } from "./routing";
-import {
-  estimateGatewayInputTokens,
-} from "./token-estimation";
+import { estimateGatewayInputTokens } from "./token-estimation";
 
 const LEASE_TTL_MS = 120_000;
 const LEASE_HEARTBEAT_MS = 30_000;

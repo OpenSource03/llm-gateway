@@ -1,7 +1,44 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import dataPlaneRoutes from "./data-plane.routes";
+import dataPlaneRoutes, {
+  codexRequestSessionHeaders,
+} from "./data-plane.routes";
+
+test("Codex subagents share routing affinity but isolate provider sessions", () => {
+  const root = new Headers({
+    "session-id": "shared-session",
+    "thread-id": "root-thread",
+    "x-client-request-id": "root-thread",
+  });
+  const child = new Headers({
+    "session-id": "shared-session",
+    "thread-id": "child-thread",
+    "x-client-request-id": "child-thread",
+  });
+
+  assert.deepEqual(codexRequestSessionHeaders(root), {
+    routing: "shared-session",
+    provider: "root-thread",
+  });
+  assert.deepEqual(codexRequestSessionHeaders(child), {
+    routing: "shared-session",
+    provider: "child-thread",
+  });
+});
+
+test("Codex request identity falls back when only one header is available", () => {
+  assert.deepEqual(
+    codexRequestSessionHeaders(
+      new Headers({ "x-client-request-id": "request-thread" }),
+    ),
+    { routing: "request-thread", provider: "request-thread" },
+  );
+  assert.deepEqual(
+    codexRequestSessionHeaders(new Headers({ "session-id": "session" })),
+    { routing: "session", provider: "session" },
+  );
+});
 
 test("model-list authentication errors cannot be cached", async () => {
   const response = await dataPlaneRoutes.request("/v1/models");

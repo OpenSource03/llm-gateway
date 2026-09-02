@@ -41,6 +41,24 @@ test("builds a compact code-mode catalog row from adapter capabilities", () => {
   assert.equal(Object.hasOwn(row, "web_search_tool_type"), false);
   assert.equal(row.base_instructions, "");
   assert.deepEqual(row.input_modalities, ["text", "image"]);
+  assert.equal(row.multi_agent_version, "v2");
+});
+
+test("enables the Codex V2 harness without provider-specific branching", () => {
+  for (const provider of ["ANTHROPIC", "XAI", "FUTURE_PROVIDER"]) {
+    const row = buildSyntheticCodexModel(
+      { ...model, provider, publicModelId: `${provider.toLowerCase()}/model` },
+      1_000,
+      {
+        modelIdSource: "public",
+        supportsSearchTool: true,
+        toolMode: "direct",
+        webSearchToolType: null,
+      },
+    );
+
+    assert.equal(row.multi_agent_version, "v2");
+  }
 });
 
 test("does not invent an effort knob for thinking-only models", () => {

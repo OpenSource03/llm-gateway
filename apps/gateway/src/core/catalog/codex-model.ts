@@ -174,6 +174,10 @@ export function buildSyntheticCodexModel(
     auto_review_model_override: null,
     model_specialty: null,
     tool_mode: clientCapabilities.toolMode,
-    multi_agent_version: null,
+    // Codex selects its collaboration tool surface from ModelInfo before the
+    // request reaches the gateway. Synthetic provider models use the same V2
+    // harness as native compatible models; provider adapters still own the
+    // actual inference protocol and model behavior.
+    multi_agent_version: "v2",
   };
 }

@@ -499,7 +499,10 @@ export class AnthropicAgentSdkTransport {
       model: input.upstreamModel,
       maxOutputTokens: Math.max(1, input.projectedOutputTokens ?? 64_000),
     });
-    const sessionId = input.request.prompt_cache_key ?? input.sessionId;
+    // `prompt_cache_key` is shared by Codex parents and subagents. The gateway
+    // supplies a thread-scoped session ID so concurrent Agent SDK sessions stay
+    // independent without giving up shared prompt-cache affinity upstream.
+    const sessionId = input.sessionId ?? input.request.prompt_cache_key;
 
     headers.set("anthropic-version", "2023-06-01");
     if (sessionId) headers.set("x-codex-session", sessionId);

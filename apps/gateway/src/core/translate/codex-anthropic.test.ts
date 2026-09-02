@@ -376,3 +376,37 @@ test("Claude SSE maps text, tool calls, and usage to Codex Responses events", as
   assert.equal(completed.usage?.input_tokens, 12);
   assert.equal(completed.usage?.output_tokens, 6);
 });
+
+test("Claude collaboration calls declare their message argument plaintext", async () => {
+  const upstream = streamFromStrings([
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_claude","usage":{"input_tokens":1}}}\n\n',
+    'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_spawn","name":"codex_tool_0","input":{}}}\n\n',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"message\\":\\"Child task\\",\\"task_name\\":\\"worker\\"}"}}\n\n',
+    'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}\n\n',
+    'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+  ]);
+  const translated = anthropicSseToCodexResponses(upstream, {
+    publicModel: "anthropic/claude-opus-5",
+    toolIdentities: new Map([
+      [
+        "codex_tool_0",
+        {
+          kind: "function" as const,
+          name: "spawn_agent",
+          namespace: "collaboration",
+        },
+      ],
+    ]),
+  });
+  const items: Array<Record<string, unknown>> = [];
+
+  for await (const frame of parseSseStream(translated)) {
+    if (frame.event !== "response.output_item.done") continue;
+    const data = JSON.parse(frame.data) as { item: Record<string, unknown> };
+
+    items.push(data.item);
+  }
+
+  assert.deepEqual(items[0]?.encrypted_function_args, []);
+});

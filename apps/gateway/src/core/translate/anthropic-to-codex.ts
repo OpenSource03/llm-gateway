@@ -37,6 +37,13 @@ const finiteUsage = (value: unknown): number =>
     ? Math.floor(value)
     : 0;
 
+const isPlaintextCollaborationTool = (tool: CodexToolIdentity): boolean =>
+  tool.kind === "function" &&
+  tool.namespace === "collaboration" &&
+  (tool.name === "spawn_agent" ||
+    tool.name === "send_message" ||
+    tool.name === "followup_task");
+
 const outputItem = (
   block: ActiveBlock,
   identity: CodexToolIdentity | undefined,
@@ -74,6 +81,9 @@ const outputItem = (
     name: tool.name,
     ...(tool.namespace ? { namespace: tool.namespace } : {}),
     arguments: JSON.stringify(parsed),
+    ...(isPlaintextCollaborationTool(tool)
+      ? { encrypted_function_args: [] }
+      : {}),
   };
 };
 

@@ -20,6 +20,7 @@ import { getProviderAdapter, ProviderProtocolError } from "../providers";
 import { fromDbProvider } from "../providers/provider-id";
 import { hmacGatewaySession } from "../security/secrets";
 import { UnsupportedAnthropicContentError } from "../translate";
+import { lowerPlaintextCodexAgentMessages } from "../translate/codex-agent-messages";
 import {
   MAX_ANTHROPIC_OUTPUT_TOKENS,
   type AnthropicMessagesRequest,
@@ -50,6 +51,7 @@ const MAX_INFERENCE_LIFETIME_MS = 10 * 60_000;
 const MAX_UPSTREAM_DISPATCHES = 4;
 
 interface ProxyRequestBase {
+  providerSessionHeader?: string;
   principal: GatewayClientPrincipal;
   sessionHeader?: string;
   signal: AbortSignal;
@@ -116,6 +118,13 @@ const proxyGatewayRequest = async (
       : requestedOutputTokens;
 
   const sessionId = normalizedSessionId(input.sessionHeader);
+  // Codex intentionally shares `session-id` and `prompt_cache_key` between a
+  // root and its subagents, while `thread-id` is unique. Preserve the shared
+  // identity for sticky account routing, but give stateful providers the
+  // thread-scoped identity so concurrent parent/child turns cannot collide.
+  const providerSessionId = input.providerSessionHeader
+    ? normalizedSessionId(input.providerSessionHeader)
+    : sessionId;
   const clientLease = await acquireClientLease(input.principal);
   const leaseGuard = createLeaseGuard({
     leases: [clientLease],
@@ -344,7 +353,7 @@ const proxyGatewayRequest = async (
             publicModel: model.publicModelId,
             identity: routed.identity,
             transport: routed.transport,
-            sessionId: sessionId ?? undefined,
+            sessionId: providerSessionId ?? undefined,
             projectedInputTokens: estimatedInputTokens,
             projectedOutputTokens,
             signal: upstreamSignal,
@@ -365,7 +374,7 @@ const proxyGatewayRequest = async (
             publicModel: model.publicModelId,
             identity: routed.identity,
             transport: routed.transport,
-            sessionId: sessionId ?? undefined,
+            sessionId: providerSessionId ?? undefined,
             projectedInputTokens: estimatedInputTokens,
             projectedOutputTokens,
             signal: upstreamSignal,
@@ -377,7 +386,7 @@ const proxyGatewayRequest = async (
             publicModel: model.publicModelId,
             secret: credential!.secret,
             identity: credential!.identity,
-            sessionId: sessionId ?? undefined,
+            sessionId: providerSessionId ?? undefined,
             projectedInputTokens: estimatedInputTokens,
             projectedOutputTokens,
             signal: upstreamSignal,
@@ -389,7 +398,7 @@ const proxyGatewayRequest = async (
             publicModel: model.publicModelId,
             secret: credential!.secret,
             identity: credential!.identity,
-            sessionId: sessionId ?? undefined,
+            sessionId: providerSessionId ?? undefined,
             projectedInputTokens: estimatedInputTokens,
             projectedOutputTokens,
             signal: upstreamSignal,
@@ -743,8 +752,14 @@ export const proxyMessagesRequest = async (input: {
 
 /** Execute one native Codex Responses request through the shared gateway core. */
 export const proxyResponsesRequest = async (input: {
+  providerSessionHeader?: string;
   principal: GatewayClientPrincipal;
   request: CodexResponsesRequest;
   sessionHeader?: string;
   signal: AbortSignal;
-}): Promise<Response> => proxyGatewayRequest({ kind: "responses", ...input });
+}): Promise<Response> =>
+  proxyGatewayRequest({
+    kind: "responses",
+    ...input,
+    request: lowerPlaintextCodexAgentMessages(input.request),
+  });

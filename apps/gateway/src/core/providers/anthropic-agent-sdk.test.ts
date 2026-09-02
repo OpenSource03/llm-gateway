@@ -167,6 +167,7 @@ test("Agent SDK Responses forwarding uses one Anthropic passthrough conversion",
     stream: true,
     store: false,
     include: [],
+    prompt_cache_key: "shared-cache-key",
   };
   const prepared = await bridge.prepareResponsesInference({
     request,
@@ -174,7 +175,7 @@ test("Agent SDK Responses forwarding uses one Anthropic passthrough conversion",
     publicModel: "anthropic/claude-opus-5",
     identity,
     transport,
-    sessionId: "session-1",
+    sessionId: "thread-session",
     signal: new AbortController().signal,
   });
   const headers = new Headers(prepared.init.headers);
@@ -188,7 +189,7 @@ test("Agent SDK Responses forwarding uses one Anthropic passthrough conversion",
   assert.equal(headers.get("x-meridian-agent"), "codex");
   assert.equal(headers.get("authorization"), `Bearer ${config.apiKey}`);
   assert.equal(body.model, "claude-opus-5");
-  assert.equal(headers.get("x-codex-session"), "session-1");
+  assert.equal(headers.get("x-codex-session"), "thread-session");
   assert.equal(
     (body.tools as Array<Record<string, unknown>>)[0]?.name,
     "mcp__codex__shell",
