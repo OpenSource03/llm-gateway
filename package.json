@@ -14,7 +14,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "test": "corepack pnpm --filter @opensource03/llm-gateway-contracts test && corepack pnpm --filter @opensource03/llm-gateway-admin-client test && corepack pnpm --filter @opensource03/llm-gateway-server test",
+    "test": "node --test deploy/agent-sdk/patches/*.test.mjs && corepack pnpm --filter @opensource03/llm-gateway-contracts test && corepack pnpm --filter @opensource03/llm-gateway-admin-client test && corepack pnpm --filter @opensource03/llm-gateway-server test",
     "test:integration": "corepack pnpm --filter @opensource03/llm-gateway-server test:integration",
     "typecheck": "corepack pnpm -r typecheck",
     "prisma:generate": "corepack pnpm --filter @opensource03/llm-gateway-server prisma:generate",

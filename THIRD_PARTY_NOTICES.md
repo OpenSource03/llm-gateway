@@ -3,8 +3,10 @@
 ## Optional Meridian integration
 
 The optional `deploy/agent-sdk` image installs `@rynfar/meridian` version
-1.66.0 from npm during a local image build. LLM Gateway does not vendor or
-modify Meridian source code.
+1.66.0 from npm during a local image build. LLM Gateway does not vendor its
+source. The derived image applies the narrow, version-pinned transformation in
+`deploy/agent-sdk/patches/preserve-cancelled-checkpoint.mjs`; the build fails if
+the reviewed upstream bundle signatures change.
 
 The reviewed Meridian `package.json` and README declare the project to be MIT
 licensed. At reviewed commit

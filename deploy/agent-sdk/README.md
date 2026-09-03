@@ -5,9 +5,15 @@ private Meridian sidecar so selected Anthropic accounts can execute through
 Anthropic's Claude Agent SDK instead.
 
 Meridian is installed from the exact npm version pinned in the Dockerfile; its
-source is not vendored here. The checked v1.66.0 package and README declare MIT,
-but its upstream repository did not contain a standalone license text at the
-reviewed commit. Review that status before redistributing a derived image. See
+source is not vendored here. The image applies one narrow, fail-closed patch to
+that installed version: an interrupted copy-on-write turn retains its valid
+pre-turn checkpoint instead of deleting it merely because partial assistant
+content reached the client. The canceled fork is still aborted and abandoned,
+so this does not continue generation or increase usage after cancellation.
+
+The checked v1.66.0 package and README declare MIT, but its upstream repository
+did not contain a standalone license text at the reviewed commit. Review that
+status before redistributing a derived image. See
 [`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md).
 
 If a released bridge catalog temporarily lags the Claude version bundled with

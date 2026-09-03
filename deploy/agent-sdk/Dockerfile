@@ -5,6 +5,11 @@ ARG MERIDIAN_VERSION=1.66.0
 RUN npm install --global --omit=dev --no-audit --no-fund "@rynfar/meridian@${MERIDIAN_VERSION}" && \
     node -e "const p=require('/usr/local/lib/node_modules/@rynfar/meridian/package.json');if(p.version!=='${MERIDIAN_VERSION}'||p.license!=='MIT')process.exit(1)"
 
+COPY deploy/agent-sdk/patches/preserve-cancelled-checkpoint.mjs /tmp/
+RUN node /tmp/preserve-cancelled-checkpoint.mjs \
+      /usr/local/lib/node_modules/@rynfar/meridian/dist && \
+    rm /tmp/preserve-cancelled-checkpoint.mjs
+
 FROM node:22-bookworm-slim AS runtime
 
 RUN apt-get update && \
