@@ -494,6 +494,7 @@ export function parseCodexResponsesRequest(
         "high",
         "xhigh",
         "max",
+        "ultra",
         "disabled",
       ].includes(effort)
     ) {

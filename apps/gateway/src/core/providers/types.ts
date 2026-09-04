@@ -105,7 +105,7 @@ export interface DiscoveredModel {
 }
 
 export type ModelReasoningEffort =
-  "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 export type ModelThinkingMode = "adaptive" | "enabled";
 

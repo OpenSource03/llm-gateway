@@ -7,6 +7,7 @@ const CODEX_REASONING_EFFORTS = [
   "high",
   "xhigh",
   "max",
+  "ultra",
 ] as const;
 
 export interface SyntheticCodexModelSource {

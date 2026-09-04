@@ -69,6 +69,16 @@ test("reconstructs the current Codex Responses request and strips internal metad
   });
 });
 
+test("accepts Astra ultra reasoning effort", () => {
+  const request = parseCodexResponsesRequest({
+    ...validRequest(),
+    model: "gpt-6-astra",
+    reasoning: { effort: "ultra", summary: "auto" },
+  });
+
+  assert.deepEqual(request.reasoning, { effort: "ultra", summary: "auto" });
+});
+
 test("rejects unknown top-level Responses fields", () => {
   assert.throws(
     () =>

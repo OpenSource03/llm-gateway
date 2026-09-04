@@ -158,7 +158,7 @@ test("OpenAI model and quota discovery parsers retain server capabilities", () =
         },
         {
           id: "gpt-reasoning",
-          supported_reasoning_levels: [{ effort: "high" }],
+          supported_reasoning_levels: [{ effort: "high" }, { effort: "ultra" }],
         },
         { id: "hidden", visibility: "hide" },
       ],
@@ -178,7 +178,7 @@ test("OpenAI model and quota discovery parsers retain server capabilities", () =
   );
   assert.deepEqual(models[0]?.inputModalities, ["text"]);
   assert.equal(models[0]?.contextWindow, 900_000);
-  assert.deepEqual(models[1]?.reasoningEfforts, ["high"]);
+  assert.deepEqual(models[1]?.reasoningEfforts, ["high", "ultra"]);
   assert.deepEqual(models[1]?.thinkingModes, ["adaptive"]);
   assert.equal(models[0]?.etag, "etag-1");
   const catalog = parseCodexCatalog({
@@ -186,6 +186,7 @@ test("OpenAI model and quota discovery parsers retain server capabilities", () =
       {
         slug: "gpt-text-only",
         default_reasoning_level: "none",
+        multi_agent_reasoning_effort: "xhigh",
         unreviewed: "drop",
       },
     ],
@@ -193,6 +194,7 @@ test("OpenAI model and quota discovery parsers retain server capabilities", () =
 
   assert.equal(catalog[0]?.slug, "gpt-text-only");
   assert.equal(catalog[0]?.default_reasoning_level, "none");
+  assert.equal(catalog[0]?.multi_agent_reasoning_effort, "xhigh");
   assert.equal("unreviewed" in catalog[0]!, false);
 
   const quota = parseCodexQuota(
@@ -234,6 +236,50 @@ test("OpenAI model and quota discovery parsers retain server capabilities", () =
 
   assert.equal(fromHeaders?.windows[0]?.usedFraction, 0.42);
   assert.equal(fromHeaders?.windows[0]?.resetsAt, 1_786_550_400_000);
+});
+
+test("OpenAI discovery requests the current Codex catalog contract", async () => {
+  const accessToken = jwt({
+    sub: "person-subject",
+    [AUTH_CLAIM]: {
+      chatgpt_account_id: "workspace-123",
+      chatgpt_plan_type: "plus",
+    },
+  });
+  const astra = {
+    slug: "gpt-6-astra",
+    display_name: "GPT-6-Astra",
+    visibility: "list",
+    default_reasoning_level: "medium",
+    supported_reasoning_levels: [{ effort: "medium" }, { effort: "ultra" }],
+    multi_agent_reasoning_effort: "xhigh",
+    max_context_window: 872_000,
+  };
+  const mock = sequenceFetch([
+    json({ models: [astra] }, { headers: { etag: '"astra-catalog"' } }),
+    json({ models: [astra] }, { headers: { etag: '"astra-catalog"' } }),
+  ]);
+  const adapter = createOpenAICodexProviderAdapter({ fetch: mock.fetch });
+
+  const discovery = await adapter.discover({
+    accessToken,
+    refreshToken: "refresh-token",
+    expiresAt: NOW + 60_000,
+  });
+
+  assert.deepEqual(discovery.models[0]?.reasoningEfforts, ["medium", "ultra"]);
+  assert.equal(discovery.nativeCatalog?.entries[0]?.slug, "gpt-6-astra");
+  assert.equal(
+    discovery.nativeCatalog?.entries[0]?.multi_agent_reasoning_effort,
+    "xhigh",
+  );
+  for (const call of mock.calls) {
+    assert.equal(
+      new URL(call.url).searchParams.get("client_version"),
+      "0.153.0",
+    );
+    assert.equal(new Headers(call.init?.headers).get("version"), "0.153.0");
+  }
 });
 
 test("OpenAI inference preparation emits the Codex Responses wire contract", async () => {

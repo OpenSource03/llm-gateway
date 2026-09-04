@@ -47,7 +47,10 @@ export const OPENAI_CODEX_ENDPOINTS = {
 } as const;
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-const CLIENT_VERSION = "0.144.1";
+// This is the newest Codex wire contract covered by this adapter's fixtures.
+// OpenAI filters the live catalog by this value; stale versions omit models
+// whose minimum supported client is newer (for example GPT-6 Astra).
+const CLIENT_VERSION = "0.153.0";
 const TOKEN_SKEW_MS = 5 * 60_000;
 const DEFAULT_DEVICE_TTL_SECONDS = 600;
 const JWT_AUTH_CLAIM = "https://api.openai.com/auth";
@@ -96,6 +99,7 @@ const CODEX_CATALOG_KEYS = [
   "model_specialty",
   "tool_mode",
   "multi_agent_version",
+  "multi_agent_reasoning_effort",
   "prefer_websockets",
   "supports_parallel_tool_calls",
   "minimal_client_version",
@@ -748,8 +752,10 @@ export function parseCodexModels(
 
 function isModelReasoningEffort(
   value: string,
-): value is "minimal" | "low" | "medium" | "high" | "xhigh" | "max" {
-  return ["minimal", "low", "medium", "high", "xhigh", "max"].includes(value);
+): value is "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" {
+  return ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(
+    value,
+  );
 }
 
 export function parseCodexCatalog(

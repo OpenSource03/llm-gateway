@@ -11,7 +11,7 @@ const model = {
   capabilities: {
     inputModalities: ["text", "image"],
     reasoning: true,
-    reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
   },
   contextWindow: 1_000_000,
   description: "Provider model",
@@ -36,7 +36,7 @@ test("builds a compact code-mode catalog row from adapter capabilities", () => {
     (row.supported_reasoning_levels as Array<{ effort: string }>).map(
       ({ effort }) => effort,
     ),
-    ["low", "medium", "high", "xhigh", "max"],
+    ["low", "medium", "high", "xhigh", "max", "ultra"],
   );
   assert.equal(Object.hasOwn(row, "web_search_tool_type"), false);
   assert.equal(row.base_instructions, "");
