@@ -33,6 +33,10 @@ provider-neutral capabilities.
 - Use semantic visibility/capability fields to remove internal, autocomplete,
   or unrepresentable image-output entries. A missing user-facing display name
   is a strong internal-entry signal.
+- Distinguish logical models from provider routes. If a live catalog presents
+  low/medium/high routes for one named model, collapse them dynamically into
+  one client model with an effort selector and retain the exact route map as
+  adapter-owned metadata. Never hardcode the provider's current model names.
 - Separate a model scope from a quota meter. Multiple model aliases may share
   the same 5-hour or weekly pool. Store the model scope for routing, plus one
   stable meter key for control-plane display and conservative aggregation.

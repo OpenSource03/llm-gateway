@@ -58,6 +58,7 @@ const publicModelCapabilities = (value: unknown): unknown => {
     inputModalities: capabilities.inputModalities,
     reasoning: capabilities.reasoning,
     reasoningEfforts: capabilities.reasoningEfforts,
+    defaultReasoningEffort: capabilities.defaultReasoningEffort,
     thinkingModes: capabilities.thinkingModes,
     contextManagement: capabilities.contextManagement,
   };

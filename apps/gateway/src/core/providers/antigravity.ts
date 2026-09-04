@@ -37,6 +37,11 @@ import {
   buildAntigravityRequest,
   transformAntigravityResponse,
 } from "./antigravity-wire";
+import {
+  antigravityRawRouteScopes,
+  collapseAntigravityEffortVariants,
+  selectAntigravityUpstreamModel,
+} from "./antigravity-model-routing";
 
 export const ANTIGRAVITY_ENDPOINTS = {
   authorize: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -326,15 +331,20 @@ export function createAntigravityProviderAdapter(
         throw new ProviderProtocolError(
           "Google account has no model available for access verification",
         );
+      const upstreamModel = selectAntigravityUpstreamModel(
+        model.upstreamId,
+        model.providerMetadata,
+        undefined,
+      );
       const sessionId = deps.randomUUID();
       const rewritten = buildAntigravityRequest({
         request: {
-          model: model.upstreamId,
+          model: upstreamModel,
           messages: [{ role: "user", content: "Reply OK." }],
           max_tokens: 1,
           stream: true,
         },
-        upstreamModel: model.upstreamId,
+        upstreamModel,
         projectId: projectIdFromSecret(secret),
         sessionId,
         timestamp: deps.now(),
@@ -377,9 +387,14 @@ export function createAntigravityProviderAdapter(
 
     async prepareInference(input) {
       const sessionId = normalizeSessionId(input.sessionId, deps.randomUUID());
+      const upstreamModel = selectAntigravityUpstreamModel(
+        input.upstreamModel,
+        input.providerMetadata,
+        input.request.output_config?.effort,
+      );
       const rewritten = buildAntigravityRequest({
         request: input.request,
-        upstreamModel: input.upstreamModel,
+        upstreamModel,
         projectId: projectIdFromSecret(input.secret),
         sessionId,
         timestamp: deps.now(),
@@ -400,7 +415,7 @@ export function createAntigravityProviderAdapter(
         protocol: "anthropic",
         publicProtocol: "anthropic",
         publicModel: input.publicModel,
-        upstreamModel: input.upstreamModel,
+        upstreamModel,
         observeHeaders: () => null,
         transformResponse: (response) =>
           transformAntigravityResponse(response, {
@@ -412,14 +427,19 @@ export function createAntigravityProviderAdapter(
     },
 
     async prepareResponsesInference(input) {
+      const upstreamModel = selectAntigravityUpstreamModel(
+        input.upstreamModel,
+        input.providerMetadata,
+        input.request.reasoning?.effort,
+      );
       const converted = codexToAnthropic(input.request, {
-        model: input.upstreamModel,
+        model: upstreamModel,
         maxOutputTokens: Math.max(1, input.projectedOutputTokens ?? 64_000),
       });
       const sessionId = normalizeSessionId(input.sessionId, deps.randomUUID());
       const rewritten = buildAntigravityRequest({
         request: converted.request,
-        upstreamModel: input.upstreamModel,
+        upstreamModel,
         projectId: projectIdFromSecret(input.secret),
         sessionId,
         timestamp: deps.now(),
@@ -440,7 +460,7 @@ export function createAntigravityProviderAdapter(
         protocol: "anthropic",
         publicProtocol: "responses",
         publicModel: input.publicModel,
-        upstreamModel: input.upstreamModel,
+        upstreamModel,
         observeHeaders: () => null,
         transformResponse: async (response) => {
           const anthropic = await transformAntigravityResponse(response, {
@@ -916,7 +936,35 @@ const displayName = (value: unknown, fallback: string): string => {
 
 export function parseAntigravityCatalog(payload: unknown): ProviderDiscovery {
   const entries = modelEntries(payload);
-  const models: DiscoveredModel[] = entries.flatMap(([upstreamId, model]) => {
+  const models = collapseAntigravityEffortVariants(discoverableModels(entries));
+  const nativeEntries = entries.map(([slug, model]) => {
+    const contextWindow = positiveInteger(model.maxTokens);
+    const maxOutputTokens = positiveInteger(model.maxOutputTokens);
+
+    return {
+      slug,
+      display_name: displayName(model.displayName ?? model.modelName, slug),
+      ...(contextWindow !== undefined
+        ? { max_context_window: contextWindow }
+        : {}),
+      ...(maxOutputTokens !== undefined
+        ? { max_output_tokens: maxOutputTokens }
+        : {}),
+    };
+  });
+
+  if (models.length === 0)
+    throw new ProviderProtocolError(
+      "Google model discovery returned no publishable models",
+    );
+
+  return { models, nativeCatalog: { entries: nativeEntries } };
+}
+
+const discoverableModels = (
+  entries: Array<[string, AntigravityModelEntry]>,
+): DiscoveredModel[] =>
+  entries.flatMap(([upstreamId, model]) => {
     const name = boundedText(model.displayName ?? model.modelName, 200);
 
     if (
@@ -948,29 +996,6 @@ export function parseAntigravityCatalog(payload: unknown): ProviderDiscovery {
       },
     ];
   });
-  const nativeEntries = entries.map(([slug, model]) => {
-    const contextWindow = positiveInteger(model.maxTokens);
-    const maxOutputTokens = positiveInteger(model.maxOutputTokens);
-
-    return {
-      slug,
-      display_name: displayName(model.displayName ?? model.modelName, slug),
-      ...(contextWindow !== undefined
-        ? { max_context_window: contextWindow }
-        : {}),
-      ...(maxOutputTokens !== undefined
-        ? { max_output_tokens: maxOutputTokens }
-        : {}),
-    };
-  });
-
-  if (models.length === 0)
-    throw new ProviderProtocolError(
-      "Google model discovery returned no publishable models",
-    );
-
-  return { models, nativeCatalog: { entries: nativeEntries } };
-}
 
 const quotaWindow = (input: {
   id: string;
@@ -999,28 +1024,57 @@ export function parseAntigravityCatalogQuota(
   payload: unknown,
   now = Date.now(),
 ): QuotaSnapshot {
-  const windows = modelEntries(payload).flatMap(([modelId, model]) => {
+  const entries = modelEntries(payload);
+  const logicalModels = collapseAntigravityEffortVariants(
+    discoverableModels(entries),
+  );
+  const routeScopes = antigravityRawRouteScopes(logicalModels);
+  const logicalNames = new Map(
+    logicalModels.map((model) => [model.upstreamId, model.name]),
+  );
+  const quotas = new Map<
+    string,
+    {
+      group?: "gemini" | "non-gemini";
+      remaining: number;
+      resetsAt?: number;
+    }
+  >();
+
+  for (const [rawModelId, model] of entries) {
     const info = isRecord(model.quotaInfo) ? model.quotaInfo : null;
     const remaining = finiteNumber(info?.remainingFraction);
 
-    if (remaining === undefined) return [];
+    if (remaining === undefined) continue;
+    const scope = routeScopes.get(rawModelId) ?? rawModelId;
     const reset = nonEmptyString(info?.resetTime);
-    const resetsAt = reset ? Date.parse(reset) : Number.NaN;
+    const parsedReset = reset ? Date.parse(reset) : Number.NaN;
+    const resetsAt = Number.isFinite(parsedReset) ? parsedReset : undefined;
     const group = antigravityQuotaGroup(
-      `${modelId} ${nonEmptyString(model.displayName) ?? ""}`,
+      `${scope} ${nonEmptyString(model.displayName) ?? ""}`,
     );
+    const current = quotas.get(scope);
 
-    return [
+    quotas.set(scope, {
+      group: current?.group ?? group,
+      remaining: Math.min(current?.remaining ?? 1, remaining),
+      ...(current?.resetsAt !== undefined || resetsAt !== undefined
+        ? { resetsAt: Math.max(current?.resetsAt ?? 0, resetsAt ?? 0) }
+        : {}),
+    });
+  }
+  const windows = [...quotas.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([scope, quota]) =>
       quotaWindow({
         id: "subscription",
-        label: `${nonEmptyString(model.displayName) ?? modelId} quota`,
-        ...(group ? { meterKey: quotaMeterKey(group) } : {}),
-        remaining,
-        ...(Number.isFinite(resetsAt) ? { resetsAt } : {}),
-        scope: modelId,
+        label: `${logicalNames.get(scope) ?? scope} quota`,
+        ...(quota.group ? { meterKey: quotaMeterKey(quota.group) } : {}),
+        remaining: quota.remaining,
+        ...(quota.resetsAt !== undefined ? { resetsAt: quota.resetsAt } : {}),
+        scope,
       }),
-    ];
-  });
+    );
 
   return {
     provider: "antigravity",
@@ -1037,7 +1091,11 @@ export function parseAntigravityQuotaSummary(
 ): QuotaSnapshot {
   const root = assertRecord(payload, "Google quota response");
   const groups = Array.isArray(root.groups) ? root.groups.filter(isRecord) : [];
-  const catalogModels = catalog ? modelEntries(catalog) : [];
+  const catalogModels = catalog
+    ? collapseAntigravityEffortVariants(
+        discoverableModels(modelEntries(catalog)),
+      )
+    : [];
   const windows = groups.flatMap((group, groupIndex) => {
     const groupName =
       nonEmptyString(group.displayName) ?? `Quota group ${groupIndex + 1}`;
@@ -1062,12 +1120,11 @@ export function parseAntigravityQuotaSummary(
       const scopes = quotaGroup
         ? catalogModels
             .filter(
-              ([modelId, model]) =>
-                antigravityQuotaGroup(
-                  `${modelId} ${nonEmptyString(model.displayName) ?? ""}`,
-                ) === quotaGroup,
+              (model) =>
+                antigravityQuotaGroup(`${model.upstreamId} ${model.name}`) ===
+                quotaGroup,
             )
-            .map(([modelId]) => modelId)
+            .map(({ upstreamId }) => upstreamId)
         : [];
       const effectiveScopes =
         scopes.length > 0

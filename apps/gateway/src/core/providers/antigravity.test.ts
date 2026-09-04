@@ -283,6 +283,73 @@ test("AntiGravity discovery publishes only the live account catalog", async () =
   });
 });
 
+test("AntiGravity collapses effort routes into Codex-compatible logical models", () => {
+  const discovery = parseAntigravityCatalog({
+    models: {
+      "gemini-3.8-flash-low": {
+        displayName: "Gemini 3.8 Flash (Low)",
+        maxTokens: 1_000_000,
+      },
+      "gemini-3.8-flash-medium": {
+        displayName: "Gemini 3.8 Flash (Medium)",
+        maxTokens: 1_000_000,
+      },
+      "gemini-3.8-flash-high": {
+        displayName: "Gemini 3.8 Flash (High)",
+        maxTokens: 1_000_000,
+      },
+      "gemini-3.5-flash-extra-low": {
+        displayName: "Gemini 3.5 Flash (Low)",
+      },
+      "gemini-3.5-flash-low": {
+        displayName: "Gemini 3.5 Flash (Medium)",
+      },
+      "gemini-3-flash-agent": {
+        displayName: "Gemini 3.5 Flash (High)",
+      },
+      "gemini-3.1-pro-low": { displayName: "Gemini 3.1 Pro (Low)" },
+      "gemini-pro-agent": { displayName: "Gemini 3.1 Pro (High)" },
+      "gemini-3.1-pro-high": { displayName: "Gemini 3.1 Pro (High)" },
+      "future-ordinary-model": { displayName: "Future Ordinary Model" },
+    },
+  });
+
+  assert.deepEqual(
+    discovery.models.map(({ upstreamId, name, reasoningEfforts }) => ({
+      upstreamId,
+      name,
+      reasoningEfforts,
+    })),
+    [
+      {
+        upstreamId: "gemini-3.8-flash",
+        name: "Gemini 3.8 Flash",
+        reasoningEfforts: ["low", "medium", "high"],
+      },
+      {
+        upstreamId: "gemini-3.5-flash",
+        name: "Gemini 3.5 Flash",
+        reasoningEfforts: ["low", "medium", "high"],
+      },
+      {
+        upstreamId: "gemini-3.1-pro",
+        name: "Gemini 3.1 Pro",
+        reasoningEfforts: ["low", "high"],
+      },
+      {
+        upstreamId: "future-ordinary-model",
+        name: "Future Ordinary Model",
+        reasoningEfforts: [],
+      },
+    ],
+  );
+  assert.equal(
+    discovery.models.find(({ upstreamId }) => upstreamId === "gemini-3.1-pro")
+      ?.defaultReasoningEffort,
+    "high",
+  );
+});
+
 test("AntiGravity catalog rejects oversized provider rosters", () => {
   assert.throws(
     () =>
@@ -382,6 +449,33 @@ test("AntiGravity quota normalizes group windows to matching live models", () =>
   assert.equal(legacy.windows[0]?.scope, "future-live-model");
   assert.equal(legacy.windows[0]?.meterKey, undefined);
   assert.equal(legacy.windows[0]?.status, "warning");
+});
+
+test("AntiGravity quota scopes effort routes to their logical model", () => {
+  const quota = parseAntigravityCatalogQuota(
+    {
+      models: {
+        "gemini-3.8-flash-low": {
+          displayName: "Gemini 3.8 Flash (Low)",
+          quotaInfo: { remainingFraction: 0.8 },
+        },
+        "gemini-3.8-flash-medium": {
+          displayName: "Gemini 3.8 Flash (Medium)",
+          quotaInfo: { remainingFraction: 0.7 },
+        },
+        "gemini-3.8-flash-high": {
+          displayName: "Gemini 3.8 Flash (High)",
+          quotaInfo: { remainingFraction: 0.6 },
+        },
+      },
+    },
+    NOW,
+  );
+
+  assert.equal(quota.windows.length, 1);
+  assert.equal(quota.windows[0]?.scope, "gemini-3.8-flash");
+  assert.equal(quota.windows[0]?.remainingFraction, 0.6);
+  assert.equal(quota.windows[0]?.meterKey, "gemini_models");
 });
 
 test("AntiGravity quota polling combines live catalog models with provider windows", async () => {
@@ -499,6 +593,86 @@ const requestFixture = (): AnthropicMessagesRequest => ({
   output_config: { effort: "high" },
   max_tokens: 4_096,
   stream: true,
+});
+
+test("AntiGravity routes logical model efforts to the matching live provider ids", async () => {
+  const adapter = createAntigravityProviderAdapter();
+  const [model] = parseAntigravityCatalog({
+    models: {
+      "gemini-3.8-flash-low": {
+        displayName: "Gemini 3.8 Flash (Low)",
+      },
+      "gemini-3.8-flash-medium": {
+        displayName: "Gemini 3.8 Flash (Medium)",
+      },
+      "gemini-3.8-flash-high": {
+        displayName: "Gemini 3.8 Flash (High)",
+      },
+    },
+  }).models;
+
+  assert.ok(model);
+  const anthropic = await adapter.prepareInference({
+    request: requestFixture(),
+    upstreamModel: model.upstreamId,
+    publicModel: `antigravity/${model.upstreamId}`,
+    providerMetadata: model.providerMetadata,
+    secret: googleSecret,
+    identity: { externalAccountId: "google-subject" },
+    signal: new AbortController().signal,
+  });
+  const anthropicBody = JSON.parse(String(anthropic.init.body)) as Record<
+    string,
+    any
+  >;
+
+  assert.equal(anthropic.upstreamModel, "gemini-3.8-flash-high");
+  assert.equal(anthropicBody.model, "gemini-3.8-flash-high");
+
+  const responses = await adapter.prepareResponsesInference({
+    request: {
+      model: `antigravity/${model.upstreamId}`,
+      instructions: "Be concise",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Hello" }],
+        },
+      ],
+      tool_choice: "auto",
+      parallel_tool_calls: true,
+      reasoning: { effort: "low", summary: "auto" },
+      store: false,
+      stream: true,
+      include: [],
+    },
+    upstreamModel: model.upstreamId,
+    publicModel: `antigravity/${model.upstreamId}`,
+    providerMetadata: model.providerMetadata,
+    secret: googleSecret,
+    identity: { externalAccountId: "google-subject" },
+    signal: new AbortController().signal,
+  });
+  const responsesBody = JSON.parse(String(responses.init.body)) as Record<
+    string,
+    any
+  >;
+
+  assert.equal(responses.upstreamModel, "gemini-3.8-flash-low");
+  assert.equal(responsesBody.model, "gemini-3.8-flash-low");
+
+  const defaultRoute = await adapter.prepareInference({
+    request: { ...requestFixture(), output_config: undefined },
+    upstreamModel: model.upstreamId,
+    publicModel: `antigravity/${model.upstreamId}`,
+    providerMetadata: model.providerMetadata,
+    secret: googleSecret,
+    identity: { externalAccountId: "google-subject" },
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(defaultRoute.upstreamModel, "gemini-3.8-flash-medium");
 });
 
 test("AntiGravity request conversion preserves harness instructions, tools, and session affinity", () => {

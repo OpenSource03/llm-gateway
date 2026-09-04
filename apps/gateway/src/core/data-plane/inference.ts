@@ -50,6 +50,11 @@ const LEASE_HEARTBEAT_MS = 30_000;
 const MAX_INFERENCE_LIFETIME_MS = 10 * 60_000;
 const MAX_UPSTREAM_DISPATCHES = 4;
 
+const providerMetadataFromCapabilities = (value: unknown): unknown =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>).providerMetadata
+    : undefined;
+
 interface ProxyRequestBase {
   providerSessionHeader?: string;
   principal: GatewayClientPrincipal;
@@ -267,6 +272,9 @@ const proxyGatewayRequest = async (
         );
       }
       const adapter = getProviderAdapter(fromDbProvider(model.provider));
+      const providerMetadata = providerMetadataFromCapabilities(
+        model.capabilities,
+      );
       const upstreamSignal = leaseGuard.signal;
       let credential: Awaited<ReturnType<typeof loadCredential>> | null = null;
       let prepared: Awaited<ReturnType<typeof adapter.prepareInference>>;
@@ -352,6 +360,7 @@ const proxyGatewayRequest = async (
             upstreamModel: model.upstreamModelId,
             publicModel: model.publicModelId,
             identity: routed.identity,
+            providerMetadata,
             transport: routed.transport,
             sessionId: providerSessionId ?? undefined,
             projectedInputTokens: estimatedInputTokens,
@@ -373,6 +382,7 @@ const proxyGatewayRequest = async (
             upstreamModel: model.upstreamModelId,
             publicModel: model.publicModelId,
             identity: routed.identity,
+            providerMetadata,
             transport: routed.transport,
             sessionId: providerSessionId ?? undefined,
             projectedInputTokens: estimatedInputTokens,
@@ -386,6 +396,7 @@ const proxyGatewayRequest = async (
             publicModel: model.publicModelId,
             secret: credential!.secret,
             identity: credential!.identity,
+            providerMetadata,
             sessionId: providerSessionId ?? undefined,
             projectedInputTokens: estimatedInputTokens,
             projectedOutputTokens,
@@ -398,6 +409,7 @@ const proxyGatewayRequest = async (
             publicModel: model.publicModelId,
             secret: credential!.secret,
             identity: credential!.identity,
+            providerMetadata,
             sessionId: providerSessionId ?? undefined,
             projectedInputTokens: estimatedInputTokens,
             projectedOutputTokens,

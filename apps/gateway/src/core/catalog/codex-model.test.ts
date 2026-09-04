@@ -61,6 +61,29 @@ test("enables the Codex V2 harness without provider-specific branching", () => {
   }
 });
 
+test("uses a discovered provider default when medium is unavailable", () => {
+  const row = buildSyntheticCodexModel(
+    {
+      ...model,
+      capabilities: {
+        inputModalities: ["text"],
+        reasoning: true,
+        reasoningEfforts: ["low", "high"],
+        defaultReasoningEffort: "high",
+      },
+    },
+    1_000,
+    {
+      modelIdSource: "public",
+      supportsSearchTool: false,
+      toolMode: "direct",
+      webSearchToolType: null,
+    },
+  );
+
+  assert.equal(row.default_reasoning_level, "high");
+});
+
 test("does not invent an effort knob for thinking-only models", () => {
   const row = buildSyntheticCodexModel(
     {

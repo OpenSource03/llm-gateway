@@ -48,6 +48,10 @@ generated migration and must be replayed from empty afterward.
   meters. Filter models by live semantic metadata, never by a copied roster;
   preserve model-scoped enforcement while collapsing aliases that share one
   upstream quota window.
+- Provider route or tier IDs are not necessarily client-facing models. When a
+  live catalog encodes effort in separate routes, publish one logical model,
+  persist the adapter-owned route map, and select the route from the request's
+  effort without exposing duplicate picker rows.
 - Direct provider execution remains the default. External transports are
   selected per account, use deployment-owned fixed origins and credentials,
   and must preserve client-side tool passthrough and sticky profile routing.

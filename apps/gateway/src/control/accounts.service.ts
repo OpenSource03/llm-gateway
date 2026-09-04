@@ -49,9 +49,15 @@ const storedModelCapabilities = (
   ...(model.reasoningEfforts
     ? { reasoningEfforts: model.reasoningEfforts }
     : {}),
+  ...(model.defaultReasoningEffort
+    ? { defaultReasoningEffort: model.defaultReasoningEffort }
+    : {}),
   ...(model.thinkingModes ? { thinkingModes: model.thinkingModes } : {}),
   ...(model.contextManagement
     ? { contextManagement: model.contextManagement }
+    : {}),
+  ...(model.providerMetadata
+    ? { providerMetadata: model.providerMetadata }
     : {}),
 });
 

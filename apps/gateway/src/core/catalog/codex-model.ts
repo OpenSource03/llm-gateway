@@ -98,6 +98,9 @@ export function buildSyntheticCodexModel(
   const reasoningEfforts = CODEX_REASONING_EFFORTS.filter((effort) =>
     providerEfforts.has(effort),
   );
+  const providerDefaultReasoningEffort = CODEX_REASONING_EFFORTS.find(
+    (effort) => effort === capabilities.defaultReasoningEffort,
+  );
 
   if (
     reasoning &&
@@ -109,9 +112,13 @@ export function buildSyntheticCodexModel(
     reasoningEfforts.push("medium");
   }
 
-  const defaultReasoningLevel = reasoningEfforts.includes("medium")
-    ? "medium"
-    : (reasoningEfforts[0] ?? "none");
+  const defaultReasoningLevel =
+    providerDefaultReasoningEffort &&
+    reasoningEfforts.includes(providerDefaultReasoningEffort)
+      ? providerDefaultReasoningEffort
+      : reasoningEfforts.includes("medium")
+        ? "medium"
+        : (reasoningEfforts[0] ?? "none");
 
   return {
     slug: codexCatalogModelId(model, clientCapabilities),

@@ -5,6 +5,14 @@ import type { CodexSearchRequest } from "../wire/codex-search";
 /** Stable, lowercase adapter identifier persisted independently of code enums. */
 export type ProviderId = string;
 export type UpstreamProtocol = "anthropic" | "responses";
+export type ProviderModelMetadataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ProviderModelMetadataValue[]
+  | { [key: string]: ProviderModelMetadataValue };
+export type ProviderModelMetadata = Record<string, ProviderModelMetadataValue>;
 
 /** Plaintext credential material. It must never be logged or stored unencrypted. */
 export interface OAuthSecret {
@@ -78,12 +86,20 @@ export interface DiscoveredModel {
   reasoning: boolean;
   /** Provider-advertised effort values; an empty list means no effort knob. */
   reasoningEfforts?: ModelReasoningEffort[];
+  /** Provider-selected default, when it differs from the generic preference. */
+  defaultReasoningEffort?: ModelReasoningEffort;
   /** Provider behavior that the Anthropic-compatible surface can represent. */
   thinkingModes?: ModelThinkingMode[];
   contextManagement?: {
     clearThinking: boolean;
     compact: boolean;
   };
+  /**
+   * Adapter-owned, non-secret metadata needed to route this logical model.
+   * Shared code persists and returns it to the same adapter without
+   * interpreting provider-specific fields.
+   */
+  providerMetadata?: ProviderModelMetadata;
   etag?: string;
   source: "live" | "fallback";
 }
@@ -153,6 +169,8 @@ export interface PrepareInferenceInput {
   publicModel: string;
   secret: OAuthSecret;
   identity: ProviderIdentity;
+  /** Adapter-owned metadata saved with the discovered logical model. */
+  providerMetadata?: unknown;
   /** Raw Claude Code session header after gateway validation. */
   sessionId?: string;
   /** Fail-closed input projection chosen by the data plane for cap accounting. */
@@ -168,6 +186,8 @@ export interface PrepareResponsesInferenceInput {
   publicModel: string;
   secret: OAuthSecret;
   identity: ProviderIdentity;
+  /** Adapter-owned metadata saved with the discovered logical model. */
+  providerMetadata?: unknown;
   /** Validated gateway session id, never a caller-controlled upstream URL. */
   sessionId?: string;
   /** Fail-closed input projection chosen by the data plane for cap accounting. */

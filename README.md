@@ -64,7 +64,8 @@ control plane on a private network.
 
 - Multiple accounts per provider with quota-aware load balancing.
 - Google Antigravity OAuth with managed-project isolation, live model
-  discovery, and model-family quota windows.
+  discovery, Codex-native reasoning effort selection, and model-family quota
+  windows.
 - Per-account direct or Claude Agent SDK execution for Anthropic; direct is the
   default and both modes may coexist in one routing pool.
 - `QUOTA_BALANCED`, `WEIGHTED_SHARE`, `LEAST_UTILIZED`, and
