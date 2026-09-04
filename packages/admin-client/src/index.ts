@@ -8,6 +8,7 @@ import type {
   CreatedGatewayClientKey,
   CreatedGatewayControlKey,
   GatewayAuditRow,
+  GatewayAccountAccessVerification,
   GatewayClientKey,
   GatewayControlKey,
   GatewayExternalTransportProfile,
@@ -280,6 +281,16 @@ export class GatewayAdminClient {
     (
       await this.#request<ApiEnvelope<GatewayProviderAccount>>(
         `/accounts/${pathPart(id)}/refresh`,
+        { method: "POST" },
+      )
+    ).data;
+
+  verifyAccountAccess = async (
+    id: string,
+  ): Promise<GatewayAccountAccessVerification> =>
+    (
+      await this.#request<ApiEnvelope<GatewayAccountAccessVerification>>(
+        `/accounts/${pathPart(id)}/verify-access`,
         { method: "POST" },
       )
     ).data;

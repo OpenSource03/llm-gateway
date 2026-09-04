@@ -17,6 +17,12 @@ Gateway from a backend/BFF using one scoped control key.
 Never grant `control-keys:write` to a normal dashboard BFF. That scope is
 root-equivalent because it can create a broader control credential.
 
+Provider account-action URLs, such as Google Antigravity's new-device account
+verification, are control-plane-only responses from
+`POST /accounts/{id}/verify-access`. An integrating BFF may pass the validated
+URL to an authorized account operator, but must keep it out of logs, history,
+analytics, and ordinary inference clients.
+
 The gateway audit row retains both the control credential and delegated actor,
 so a compromised integration key remains attributable even if it supplies a
 false actor value.

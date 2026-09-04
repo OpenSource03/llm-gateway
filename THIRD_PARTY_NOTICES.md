@@ -18,3 +18,13 @@ redistributing an image containing that package.
 
 `opencode-with-claude` was used as an architectural reference only. No source
 code is included. Its reviewed repository contains an MIT license.
+
+## Antigravity protocol references
+
+`router-for-me/CLIProxyAPI` at reviewed commit
+`2a6b87aca083a5bf498ac1f68a1b636c500d7aaa` and
+`cortexkit/antigravity-auth` at reviewed commit
+`351c2bf09f007792e7bc183ba73d11e2c57146fe` were used as protocol and
+architecture references for Google Antigravity OAuth, managed-project,
+catalog, quota, and streaming behavior. No source from either project is
+vendored. Both reviewed repositories contain MIT license files.

@@ -34,6 +34,7 @@ import {
   refreshGatewayAccount,
   startOAuthAttempt,
   updateGatewayAccount,
+  verifyGatewayAccountAccess,
 } from "./accounts.service";
 import {
   createGatewayClientKey,
@@ -266,6 +267,21 @@ app.post("/accounts/:id/refresh", zValidator("param", idParams), async (c) =>
       refreshCredential: true,
     }),
   }),
+);
+app.post(
+  "/accounts/:id/verify-access",
+  zValidator("param", idParams),
+  async (c) => {
+    c.header("Cache-Control", "private, no-store");
+
+    return c.json({
+      success: true,
+      data: await verifyGatewayAccountAccess(
+        c.req.valid("param").id,
+        c.req.raw.signal,
+      ),
+    });
+  },
 );
 app.delete("/accounts/:id", zValidator("param", idParams), async (c) =>
   c.json({

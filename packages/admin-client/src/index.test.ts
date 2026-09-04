@@ -154,3 +154,33 @@ test("admin client exposes external profile discovery and linking", async () => 
     profile_id: "default",
   });
 });
+
+test("admin client keeps provider verification actions on the control plane", async () => {
+  let captured: Request | undefined;
+  const client = new GatewayAdminClient({
+    baseUrl: "https://control.example.test/admin/v1",
+    apiKey: "llmgw_ctl_secret",
+    fetch: async (input, init) => {
+      captured = new Request(input, init);
+
+      return Response.json({
+        success: true,
+        data: {
+          status: "action_required",
+          actionUrl:
+            "https://accounts.google.com/signin/continue?service=cloudcode",
+        },
+      });
+    },
+  });
+  const result = await client.verifyAccountAccess(
+    "4d940f3d-914c-43b8-82d4-d60abc6c2cb7",
+  );
+
+  assert.equal(result.status, "action_required");
+  assert.equal(captured?.method, "POST");
+  assert.equal(
+    captured?.url,
+    "https://control.example.test/admin/v1/accounts/4d940f3d-914c-43b8-82d4-d60abc6c2cb7/verify-access",
+  );
+});

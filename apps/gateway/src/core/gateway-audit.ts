@@ -64,6 +64,13 @@ export const GATEWAY_AUDIT_ROUTE_PATTERNS: GatewayAuditRoutePattern[] = [
   ),
   p(
     ["POST"],
+    /^\/accounts\/(?<id>[^/]+)\/verify-access$/,
+    "llm-gateway.account.verify-access",
+    "provider-account",
+    false,
+  ),
+  p(
+    ["POST"],
     /^\/accounts\/(?<id>[^/]+)\/refresh$/,
     "llm-gateway.account.refresh",
     "provider-account",

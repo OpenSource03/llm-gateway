@@ -36,8 +36,18 @@ generated migration and must be replayed from empty afterward.
   model list.
 - Keep routing sticky where possible so multi-account balancing does not destroy
   provider prompt caches.
+- Do not infer an account-wide concurrency limit from overlapping requests on
+  one provider session. Test separate native sessions, then isolate helper,
+  title, parent, and sub-agent trajectories without breaking turn continuity.
 - New providers implement the complete adapter contract and conformance tests;
   do not scatter provider switches through shared routing code.
+- Treat OAuth completion, account onboarding, and inference readiness as
+  separate states. A provider may issue tokens and catalogs while still
+  requiring a control-plane-only account verification action.
+- Distinguish provider catalog entries, routable client models, and quota
+  meters. Filter models by live semantic metadata, never by a copied roster;
+  preserve model-scoped enforcement while collapsing aliases that share one
+  upstream quota window.
 - Direct provider execution remains the default. External transports are
   selected per account, use deployment-owned fixed origins and credentials,
   and must preserve client-side tool passthrough and sticky profile routing.
@@ -63,3 +73,8 @@ integration suites. Authentication, key lifecycle, actor delegation,
 encryption, audit, or scoping changes require an explicit adversarial review.
 Live tests must use synthetic prompts and structural logging only, then remove
 temporary keys and rows.
+
+Follow [workflow.md](workflow.md) for the complete new-provider implementation
+and verification sequence. In particular, model discovery is not proof of
+inference: every provider needs a real minimal request and a multi-turn tool
+loop through both public protocols before it is called complete.

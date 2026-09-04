@@ -57,3 +57,16 @@ does not make a ChatGPT bearer valid at the gateway, but a compromise of that
 user can call the loopback bridge or retrieve credentials allowed by the same
 Keychain ACL. Keep the listener on loopback, use HTTPS for remote gateway
 origins, and revoke the gateway data key after local-user compromise.
+
+Google Antigravity uses an installed-application OAuth client with PKCE and a
+manual loopback callback handoff. The installed client value is public by
+protocol; user access/refresh tokens, OAuth state, PKCE verifier, and managed
+project ID remain encrypted in the gateway database. The adapter rejects
+remote image URLs instead of fetching them with provider credentials, pins all
+Google origins in code, and scopes live quota windows to matching catalog
+models whenever upstream reports separate Gemini and third-party pools.
+Google account-verification URLs are accepted only when the structured error
+reason and domain match Cloud Code and the action uses the exact HTTPS
+`accounts.google.com/signin/continue` path. They are returned only by the
+authenticated control plane with `no-store`, never persisted or sent to a data
+key holder.

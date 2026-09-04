@@ -498,6 +498,7 @@ const assertContentBlock = (
         "id",
         "name",
         "input",
+        "signature",
         "caller",
         "cache_control",
       ]);
@@ -513,6 +514,14 @@ const assertContentBlock = (
         throw new TypeError(`${path} tool_use id/name/input is invalid`);
       }
       assertBoundedJsonValue(value.input, `${path}.input`);
+      if (
+        value.signature !== undefined &&
+        (typeof value.signature !== "string" ||
+          !value.signature ||
+          value.signature.length > 16_384)
+      ) {
+        throw new TypeError(`${path}.signature must be a bounded string`);
+      }
       assertCacheControl(value.cache_control, `${path}.cache_control`);
       if (value.caller !== undefined) {
         if (!isRecord(value.caller))

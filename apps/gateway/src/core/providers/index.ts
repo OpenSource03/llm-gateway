@@ -1,5 +1,6 @@
 import type { ProviderId, SubscriptionProviderAdapter } from "./types";
 
+import { antigravityProviderAdapter } from "./antigravity";
 import { anthropicProviderAdapter } from "./anthropic";
 import { openAICodexProviderAdapter } from "./openai-codex";
 import { toDbProvider } from "./provider-id";
@@ -11,6 +12,7 @@ for (const adapter of [
   anthropicProviderAdapter,
   openAICodexProviderAdapter,
   xaiProviderAdapter,
+  antigravityProviderAdapter,
 ]) {
   toDbProvider(adapter.id);
   if (PROVIDER_ADAPTERS.has(adapter.id)) {
@@ -34,6 +36,8 @@ export function getProviderAdapter(
 }
 
 export * from "./anthropic";
+export * from "./antigravity";
+export * from "./antigravity-wire";
 export * from "./claude-code-cch";
 export * from "./claude-code-wire";
 export * from "./openai-codex";

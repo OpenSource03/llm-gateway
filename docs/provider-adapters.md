@@ -4,6 +4,12 @@ Provider IDs are lowercase, bounded identifiers such as `anthropic` or
 `future-provider`. They are persisted as strings, so registering a new adapter
 does not require a database enum migration.
 
+Google Antigravity is the reference for provider-owned encrypted credential
+metadata: its managed project ID lives inside the credential envelope rather
+than becoming a shared routing concern. Its model list comes only from the
+authenticated `fetchAvailableModels` response; never add static Antigravity
+model IDs to the gateway or client catalog.
+
 Every adapter must implement:
 
 - authentication start/continue and refresh;

@@ -55,3 +55,13 @@ test("control-key mutations are covered by the standalone audit registry", () =>
     "control-key.revoke",
   );
 });
+
+test("provider access verification is audited without its action URL", () => {
+  const pattern = matchGatewayAuditPattern(
+    "POST",
+    "/accounts/account-id/verify-access",
+  );
+
+  assert.equal(pattern?.action, "llm-gateway.account.verify-access");
+  assert.equal(pattern?.captureBody, false);
+});

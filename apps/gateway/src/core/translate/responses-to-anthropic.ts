@@ -595,7 +595,7 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return output;
 }
 
-async function aggregateAnthropicSse(
+export async function aggregateAnthropicSse(
   stream: ReadableStream<Uint8Array>,
   publicModel: string,
 ): Promise<AnthropicMessageResponse> {
@@ -662,6 +662,11 @@ async function aggregateAnthropicSse(
         typeof delta.thinking === "string"
       ) {
         state.block.thinking = `${typeof state.block.thinking === "string" ? state.block.thinking : ""}${delta.thinking}`;
+      } else if (
+        state.block.type === "thinking" &&
+        typeof delta.signature === "string"
+      ) {
+        state.block.signature = `${typeof state.block.signature === "string" ? state.block.signature : ""}${delta.signature}`;
       } else if (
         state.block.type === "tool_use" &&
         typeof delta.partial_json === "string"

@@ -1,8 +1,8 @@
 # LLM Gateway
 
-Self-host Claude Code, Codex CLI/Desktop, OpenAI Codex subscription, Claude
-subscription, and xAI subscription traffic behind one provider-extensible,
-multi-account gateway.
+Self-host Claude Code, Codex CLI/Desktop, OpenAI Codex subscription, Claude,
+xAI, and Google Antigravity subscription traffic behind one
+provider-extensible, multi-account gateway.
 
 LLM Gateway discovers models from connected accounts, publishes one client
 catalog, preserves provider-native protocols where possible, and routes each
@@ -12,7 +12,7 @@ Responses clients.
 
 > [!IMPORTANT]
 > LLM Gateway is an independent community project. It is not affiliated with,
-> endorsed by, or supported by Anthropic, OpenAI, or xAI. Consumer
+> endorsed by, or supported by Anthropic, Google, OpenAI, or xAI. Consumer
 > subscription transports are private compatibility surfaces and may change at
 > any time. You are responsible for complying with every provider's terms and
 > policies.
@@ -41,7 +41,7 @@ flowchart LR
     Worker[Worker role\nno public ingress]
     DB[(PostgreSQL 16)]
     KEK[Local RSA or Azure Key Vault]
-    Providers[Anthropic / OpenAI / xAI]
+    Providers[Anthropic / Google Antigravity / OpenAI / xAI]
 
     Clients -->|llmgw_dat key| Data
     Dashboard -->|server-side llmgw_ctl key| Control
@@ -63,6 +63,8 @@ control plane on a private network.
 ## Capabilities
 
 - Multiple accounts per provider with quota-aware load balancing.
+- Google Antigravity OAuth with managed-project isolation, live model
+  discovery, and model-family quota windows.
 - Per-account direct or Claude Agent SDK execution for Anthropic; direct is the
   default and both modes may coexist in one routing pool.
 - `QUOTA_BALANCED`, `WEIGHTED_SHARE`, `LEAST_UTILIZED`, and
@@ -162,15 +164,25 @@ curl -fsS -X POST \
 - Anthropic returns an authorization URL. After approval, paste the displayed
   authorization code into `POST /oauth-attempts/{id}/complete` as
   `{ "authorization_code": "..." }`.
+- Google Antigravity uses the same completion endpoint. Open its Google sign-in
+  URL, approve access, then paste either the authorization code or the complete
+  final `localhost:51121/oauth-callback?...` URL. A browser error at that
+  loopback address is expected when the gateway runs on another machine; copy
+  the URL from the address bar.
+- Google may require an additional account check when a subscription is first
+  used from a new machine or network. Authorized operators can call
+  `POST /accounts/{id}/verify-access`; if action is required, the control plane
+  returns a short-lived, host-validated Google URL. Complete it and call the
+  endpoint again. Verification URLs are never exposed on the data plane.
 - OpenAI and xAI use device authorization. Open the verification URL, enter
   the displayed code, then call `POST /oauth-attempts/{id}/poll` at the
   indicated interval.
 
 After building from source,
 `node apps/gateway/dist/cli.js provider-login <provider>` drives the same flow
-interactively: it prompts only for Anthropic's displayed authorization code and
-automatically polls device-code providers. Use `--no-wait` when an external
-dashboard will finish the attempt.
+interactively: it prompts for paste-code providers and automatically polls
+device-code providers. Use `--no-wait` when an external dashboard will finish
+the attempt.
 
 Refresh `/models`, create routing pools/members, then create a data-plane key.
 The complete contract is available at the private
@@ -330,6 +342,14 @@ Provider compatibility is deliberately isolated behind adapter contracts. See
 - Encrypted OpenAI/xAI reasoning cannot be converted into Anthropic thinking
   signatures without loss.
 - xAI requires a real account smoke test before relying on it in production.
+- Google Antigravity is a private compatibility surface. Its models are never
+  bundled by the gateway; an account must complete a live catalog refresh
+  before any Antigravity model is published. Image-output models are omitted
+  because neither supported public client protocol can faithfully return their
+  binary assistant output. Provider-internal catalog entries without a
+  user-facing display name are also omitted. Native Google Search grounding is
+  not advertised until its citations and tool history can round-trip through
+  both client protocols without loss.
 
 ## License
 

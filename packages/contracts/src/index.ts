@@ -255,8 +255,14 @@ export interface GatewayProviderAccount {
   lastSuccessfulRequestAt: string | null;
   lastQuotaRefreshAt: string | null;
   availableModelCount: number;
+  accessVerificationSupported: boolean;
   quotaWindows: GatewayQuotaWindow[];
   createdAt: string;
+}
+
+export interface GatewayAccountAccessVerification {
+  status: "ready" | "action_required";
+  actionUrl?: string;
 }
 
 export interface GatewayExternalTransportProfile {
@@ -593,6 +599,14 @@ export const controlOpenApiDocument = {
       post: operation("Refresh provider account", "accounts:write", undefined, {
         parameters: [pathParameter("id")],
       }),
+    },
+    "/accounts/{id}/verify-access": {
+      post: operation(
+        "Verify provider account access",
+        "accounts:write",
+        undefined,
+        { parameters: [pathParameter("id")] },
+      ),
     },
     "/models": { get: operation("List discovered models", "models:read") },
     "/models/refresh": {

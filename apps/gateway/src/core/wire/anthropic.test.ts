@@ -61,6 +61,61 @@ test("Messages validation accepts the supported nested contract", () => {
   );
 });
 
+test("Messages validation preserves bounded provider tool signatures", () => {
+  const request = {
+    model: "antigravity/gemini-model",
+    messages: [
+      { role: "user", content: "Use the tool" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "call-1",
+            name: "echo",
+            input: { value: "hello" },
+            signature: "provider-signature",
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "call-1",
+            content: "hello",
+          },
+        ],
+      },
+    ],
+    max_tokens: 128,
+  };
+
+  assert.doesNotThrow(() => assertAnthropicMessagesRequest(request));
+  assert.throws(
+    () =>
+      assertAnthropicMessagesRequest({
+        ...request,
+        messages: [
+          request.messages[0],
+          {
+            ...request.messages[1],
+            content: [
+              {
+                ...(
+                  request.messages[1].content as Array<Record<string, unknown>>
+                )[0],
+                signature: "x".repeat(16_385),
+              },
+            ],
+          },
+        ],
+      }),
+    /signature must be a bounded string/,
+  );
+});
+
 test("Messages validation rejects malformed nested input before routing", () => {
   for (const request of [
     { ...valid(), messages: [null] },

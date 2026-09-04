@@ -5,3 +5,8 @@ useDefault = true
 description = "Public Anthropic beta feature identifier, not a credential"
 regexTarget = "secret"
 regexes = ['''interleaved-thinking-2025-05-14''']
+
+[[allowlists]]
+description = "Google Antigravity installed-app OAuth value; public clients cannot keep a confidential secret"
+regexTarget = "secret"
+regexes = ['''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''']

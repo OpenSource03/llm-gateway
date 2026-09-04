@@ -5,6 +5,9 @@ Versioning after the initial 0.x compatibility period.
 
 ## Unreleased
 
+- Add Google Antigravity as a first-class multi-account provider with PKCE
+  login, encrypted managed-project metadata, live model/quota discovery, and
+  Anthropic Messages plus Codex Responses translation.
 - Add an optional, loopback-only macOS Codex authentication bridge that keeps
   ChatGPT Remote Control available while every model request remains routed
   through a Keychain-authenticated LLM Gateway.

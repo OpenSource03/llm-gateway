@@ -63,6 +63,7 @@ test(
           {
             id: "weekly:scoped",
             label: "Scoped weekly",
+            meterKey: "shared_provider_pool",
             usedFraction: 1,
             status: "exhausted",
             scope: marker,
@@ -100,6 +101,7 @@ test(
           (row) =>
             row.source === "POLL" &&
             row.modelId === model.id &&
+            row.meterKey === "shared_provider_pool" &&
             row.windowKey === "weekly:scoped" &&
             row.utilizationBps === 10_000,
         ),

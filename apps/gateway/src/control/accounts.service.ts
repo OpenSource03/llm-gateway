@@ -101,6 +101,7 @@ export interface GatewayProviderAccountRow {
   lastSuccessfulRequestAt: string | null;
   lastQuotaRefreshAt: string | null;
   availableModelCount: number;
+  accessVerificationSupported: boolean;
   quotaWindows: Array<{
     key: string;
     label: string;
@@ -144,8 +145,16 @@ const toAccountRow = (account: AccountRecord): GatewayProviderAccountRow => {
 
   for (const item of account.quotaSnapshots ?? []) {
     const key = `${item.meterKey}:${item.windowKey}`;
+    const current = quota.get(key);
 
-    if (!quota.has(key)) quota.set(key, item);
+    if (
+      !current ||
+      item.observedAt > current.observedAt ||
+      (item.observedAt.getTime() === current.observedAt.getTime() &&
+        (item.utilizationBps ?? -1) > (current.utilizationBps ?? -1))
+    ) {
+      quota.set(key, item);
+    }
   }
 
   return {
@@ -170,6 +179,9 @@ const toAccountRow = (account: AccountRecord): GatewayProviderAccountRow => {
       account.lastSuccessfulRequestAt?.toISOString() ?? null,
     lastQuotaRefreshAt: account.lastQuotaRefreshAt?.toISOString() ?? null,
     availableModelCount: account.accountModels?.length ?? 0,
+    accessVerificationSupported: Boolean(
+      getProviderAdapter(fromDbProvider(account.provider)).verifyAccess,
+    ),
     quotaWindows: [...quota.values()].map((item) => ({
       key: `${item.meterKey}:${item.windowKey}`,
       label: `${item.meterKey} · ${item.windowKey}`.replaceAll("_", " "),
@@ -564,7 +576,7 @@ export const saveQuotaSnapshot = async (
         {
           accountId,
           modelId: resolvedModelId ?? null,
-          meterKey: window.scope ?? "chat",
+          meterKey: window.meterKey ?? window.scope ?? "chat",
           windowKey: window.id,
           used: window.usedFraction,
           remaining: window.remainingFraction,
@@ -744,6 +756,7 @@ const finishLogin = async (
       select: { createdByActorId: true },
     });
   const dbProvider = toDbProvider(provider);
+  const adapter = getProviderAdapter(provider);
   const key = identityKey(progress.identity);
   const target = targetAccountId
     ? await llmGatewayPrisma.gatewayProviderAccount.findUnique({
@@ -855,7 +868,6 @@ const finishLogin = async (
 
   signal?.throwIfAborted();
 
-  const adapter = getProviderAdapter(provider);
   const [modelsResult, quotaResult] = await Promise.allSettled([
     discoverAccountModels(account.id, provider, progress.secret, signal),
     adapter.fetchQuota(progress.secret, progress.identity, signal),
@@ -1210,6 +1222,97 @@ export const loadCredential = async (
   );
 
   return { ...payload, revision: credential.revision };
+};
+
+export interface GatewayAccountAccessVerification {
+  status: "ready" | "action_required";
+  actionUrl?: string;
+}
+
+export const verifyGatewayAccountAccess = async (
+  accountId: string,
+  signal?: AbortSignal,
+): Promise<GatewayAccountAccessVerification> => {
+  const lease = await tryAcquireLease({
+    kind: "TOKEN_REFRESH",
+    resourceId: `verify:${accountId}`,
+    ttlMs: REFRESH_LEASE_MS,
+  });
+
+  if (!lease)
+    throw new GatewayError(
+      "Account verification is already running",
+      409,
+      "VERIFICATION_IN_PROGRESS",
+    );
+  const guard = createLeaseGuard({
+    leases: [lease],
+    ttlMs: REFRESH_LEASE_MS,
+    heartbeatIntervalMs: REFRESH_HEARTBEAT_MS,
+    signal,
+    timeoutMs: ACCOUNT_REFRESH_TIMEOUT_MS,
+  });
+
+  try {
+    const account = await llmGatewayPrisma.gatewayProviderAccount.findUnique({
+      where: { id: accountId },
+      select: { provider: true, transportMode: true },
+    });
+
+    if (!account) throw new GatewayError("Account not found", 404, "NOT_FOUND");
+    if (account.transportMode !== "direct") {
+      throw new GatewayError(
+        "External transports own their account verification",
+        400,
+        "VERIFICATION_UNSUPPORTED",
+      );
+    }
+    const adapter = getProviderAdapter(fromDbProvider(account.provider));
+
+    if (!adapter.verifyAccess) {
+      throw new GatewayError(
+        "Provider does not expose an account verification flow",
+        400,
+        "VERIFICATION_UNSUPPORTED",
+      );
+    }
+    let credential = await loadCredential(accountId);
+
+    if (credential.secret.expiresAt <= Date.now() + 5 * 60 * 1000) {
+      await refreshGatewayAccount(accountId, {
+        refreshCredential: true,
+        signal: guard.signal,
+      });
+      credential = await loadCredential(accountId);
+    }
+    guard.throwIfFailed();
+    const result = await adapter.verifyAccess(
+      credential.secret,
+      credential.identity,
+      guard.signal,
+    );
+
+    guard.throwIfFailed();
+    if (result.kind === "ready") {
+      await llmGatewayPrisma.gatewayProviderAccount.update({
+        where: { id: accountId },
+        data: { status: "ACTIVE", healthReason: null },
+      });
+
+      return { status: "ready" };
+    }
+    await llmGatewayPrisma.gatewayProviderAccount.update({
+      where: { id: accountId },
+      data: {
+        status: "ERROR",
+        healthReason: "Provider account verification required",
+      },
+    });
+
+    return { status: "action_required", actionUrl: result.actionUrl };
+  } finally {
+    await guard.finish();
+  }
 };
 
 export const refreshGatewayAccount = async (

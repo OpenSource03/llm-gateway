@@ -576,7 +576,7 @@ export const persistGatewayHeaderQuota = async (
     // secondary windows) apply to every model on the account. Only an
     // explicitly model-scoped observation is attached to this model.
     modelId: window.scope ? modelId : null,
-    meterKey: window.scope ?? "chat",
+    meterKey: window.meterKey ?? window.scope ?? "chat",
     windowKey: window.id,
     used: window.usedFraction,
     remaining: window.remainingFraction,

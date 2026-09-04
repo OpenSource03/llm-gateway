@@ -13,6 +13,12 @@ export interface OAuthSecret {
   /** Epoch milliseconds. A five-minute safety skew is already applied. */
   expiresAt: number;
   idToken?: string;
+  /**
+   * Provider-owned, non-secret routing metadata stored inside the encrypted
+   * credential envelope. Shared routing code must treat these fields as
+   * opaque and adapters must validate them before use.
+   */
+  metadata?: Record<string, string>;
 }
 
 export interface ProviderIdentity {
@@ -99,6 +105,8 @@ export interface ProviderDiscovery {
 export interface QuotaWindow {
   id: string;
   label: string;
+  /** Stable provider meter shared by model-scoped windows. */
+  meterKey?: string;
   usedFraction?: number;
   remainingFraction?: number;
   resetsAt?: number;
@@ -130,6 +138,14 @@ export interface ProviderFailure {
   retryAfterMs?: number;
   status: number;
 }
+
+export type ProviderAccessVerification =
+  | { kind: "ready" }
+  | {
+      kind: "action-required";
+      action: "verify-account";
+      actionUrl: string;
+    };
 
 export interface PrepareInferenceInput {
   request: AnthropicMessagesRequest;
@@ -255,6 +271,12 @@ export interface SubscriptionProviderAdapter {
     identity: ProviderIdentity,
     signal?: AbortSignal,
   ): Promise<QuotaSnapshot>;
+  /** Optional account-readiness probe exposed only through the control plane. */
+  verifyAccess?(
+    secret: OAuthSecret,
+    identity: ProviderIdentity,
+    signal?: AbortSignal,
+  ): Promise<ProviderAccessVerification>;
   prepareInference(input: PrepareInferenceInput): Promise<PreparedUpstream>;
   /** Codex Responses lane. Every enabled provider must implement this contract. */
   prepareResponsesInference(
