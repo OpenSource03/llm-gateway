@@ -310,6 +310,14 @@ test("AntiGravity collapses effort routes into Codex-compatible logical models",
       "gemini-3.1-pro-low": { displayName: "Gemini 3.1 Pro (Low)" },
       "gemini-pro-agent": { displayName: "Gemini 3.1 Pro (High)" },
       "gemini-3.1-pro-high": { displayName: "Gemini 3.1 Pro (High)" },
+      "gemini-2.5-flash": { displayName: "Gemini 3.1 Flash Lite" },
+      "gemini-2.5-flash-lite": { displayName: "Gemini 3.1 Flash Lite" },
+      "gemini-2.5-flash-thinking": { displayName: "Gemini 3.1 Flash Lite" },
+      "gemini-3.1-flash-lite": {
+        displayName: "Gemini 3.1 Flash Lite",
+        maxTokens: 1_000_000,
+        supportsThinking: true,
+      },
       "future-ordinary-model": { displayName: "Future Ordinary Model" },
     },
   });
@@ -337,6 +345,11 @@ test("AntiGravity collapses effort routes into Codex-compatible logical models",
         reasoningEfforts: ["low", "high"],
       },
       {
+        upstreamId: "gemini-3.1-flash-lite",
+        name: "Gemini 3.1 Flash Lite",
+        reasoningEfforts: [],
+      },
+      {
         upstreamId: "future-ordinary-model",
         name: "Future Ordinary Model",
         reasoningEfforts: [],
@@ -348,6 +361,13 @@ test("AntiGravity collapses effort routes into Codex-compatible logical models",
       ?.defaultReasoningEffort,
     "high",
   );
+  const flashLite = discovery.models.find(
+    ({ upstreamId }) => upstreamId === "gemini-3.1-flash-lite",
+  );
+
+  assert.equal(flashLite?.reasoning, true);
+  assert.equal(flashLite?.contextWindow, 1_000_000);
+  assert.equal(flashLite?.providerMetadata, undefined);
 });
 
 test("AntiGravity catalog rejects oversized provider rosters", () => {

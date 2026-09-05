@@ -71,14 +71,21 @@ const logicalIdSlug = (name: string): string =>
 const isEffortGroup = (variants: ModelVariant[]): boolean =>
   new Set(variants.flatMap(({ effort }) => (effort ? [effort] : []))).size > 1;
 
+const isUnlabeledAliasGroup = (variants: ModelVariant[]): boolean =>
+  variants.length > 1 && variants.every(({ effort }) => effort === undefined);
+
 const uniqueLogicalId = (
   baseName: string,
   variants: ModelVariant[],
   claimedIds: Set<string>,
 ): string => {
-  const plainVariant = [...variants]
+  const normalizedNameId = providerModelId(logicalIdSlug(baseName));
+  const plainVariants = [...variants]
     .filter(({ effort }) => effort === undefined)
-    .sort((left, right) => left.rawId.localeCompare(right.rawId))[0];
+    .sort((left, right) => left.rawId.localeCompare(right.rawId));
+  const plainVariant =
+    plainVariants.find(({ rawId }) => rawId === normalizedNameId) ??
+    plainVariants[0];
   const base =
     providerModelId(plainVariant?.rawId) ??
     providerModelId(logicalIdSlug(baseName)) ??
@@ -143,6 +150,16 @@ const collapseGroup = (
   const sorted = [...variants].sort((left, right) =>
     left.rawId.localeCompare(right.rawId),
   );
+  if (isUnlabeledAliasGroup(sorted)) {
+    const canonical =
+      sorted.find(({ rawId }) => rawId === logicalId) ?? sorted[0]!;
+
+    return {
+      ...canonical.model,
+      upstreamId: logicalId,
+      name: canonical.baseName,
+    };
+  }
   const routes: Partial<Record<ModelReasoningEffort, string>> = {};
 
   for (const effort of REASONING_EFFORTS) {
@@ -188,8 +205,10 @@ const collapseGroup = (
 
 /**
  * Antigravity publishes effort-specific route ids as separate catalog rows.
- * Collapse only unambiguous display-name families with at least two efforts;
- * all unrelated and future entries continue to pass through untouched.
+ * Collapse display-name families that are either labeled effort routes or
+ * unlabeled aliases. For aliases, prefer the route whose ID matches the
+ * normalized display name so legacy route IDs do not create duplicate rows.
+ * Unrelated and future entries continue to pass through untouched.
  */
 export function collapseAntigravityEffortVariants(
   discoveredModels: DiscoveredModel[],
@@ -206,7 +225,9 @@ export function collapseAntigravityEffortVariants(
   }
   const groupedKeys = new Set(
     [...groups.entries()]
-      .filter(([, group]) => isEffortGroup(group))
+      .filter(
+        ([, group]) => isEffortGroup(group) || isUnlabeledAliasGroup(group),
+      )
       .map(([key]) => key),
   );
   const claimedIds = new Set(
