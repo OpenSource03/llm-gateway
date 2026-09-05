@@ -99,7 +99,7 @@ export type RoutingSelection =
     }
   | {
       kind: "unavailable";
-      reason: "quota" | "capacity" | "accounts";
+      reason: "quota_exhausted" | "quota" | "capacity" | "accounts";
       retryAt: Date | null;
       evaluations: CandidateEvaluation[];
     };

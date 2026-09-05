@@ -429,6 +429,17 @@ export const routeAccount = async (input: {
     );
   }
   if (selection.kind === "unavailable") {
+    if (selection.reason === "quota_exhausted") {
+      const reset = selection.retryAt
+        ? ` Resets at ${selection.retryAt.toISOString()}.`
+        : "";
+
+      throw new GatewayError(
+        `Subscription quota is fully used.${reset}`,
+        400,
+        "SUBSCRIPTION_QUOTA_EXHAUSTED",
+      );
+    }
     throw new GatewayError(
       selection.reason === "quota"
         ? "All eligible subscription accounts are quota-limited"

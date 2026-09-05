@@ -27,11 +27,11 @@ these failures.
 
 A Fable stream disconnected at 03:42:39 UTC when the gateway was stopped
 during that investigation. Waiting only for OpenAI leases did not protect
-other providers. Rollouts must wait for all active inference leases, and
-Docker's stop timeout must permit the application's drain. The application
-now allows eleven minutes to drain its ten-minute maximum inference lifetime;
-Compose allows twelve minutes before forced termination. For manual Docker
-deployments use `--stop-timeout 720`.
+other providers. A later long drain closed the listener while an accepted
+stream remained active, so all Codex reconnect attempts received 502. On the
+local single-instance deployment, verify a candidate first and replace the
+active container immediately. Use a stable proxy with side-by-side instances
+when uninterrupted streams are required.
 
 Codex's HTTP retries and the gateway's bounded upstream dispatch retries
 cannot repair a stream cut after output delivery. Do not blindly replay

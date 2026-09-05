@@ -70,6 +70,15 @@ data plane may be public, but the control plane must default to private ingress.
 Local RSA wrapping is a supported deployment mode only when the key is a
 regular owner-only file mounted read-only.
 
+For the local single-instance gateway on fixed host ports, do not wait through
+a long graceful drain during an image replacement. Verify the candidate first,
+retain the current container for rollback, then reset the active container and
+start the replacement immediately so Codex can reconnect within its configured
+HTTP and stream retry window. Check every provider's active leases before the
+reset, but do not leave the listening port closed while waiting for them to
+drain. A rolling or side-by-side deployment behind a stable proxy is preferred
+when uninterrupted streams are required.
+
 ## Verification
 
 Protocol changes require focused fixtures plus the complete unit and database

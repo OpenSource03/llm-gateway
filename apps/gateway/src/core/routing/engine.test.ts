@@ -241,6 +241,41 @@ test("reports the earliest retry time when all accounts are cooling down", () =>
   }
 });
 
+test("distinguishes confirmed quota exhaustion from retryable quota state", () => {
+  const resetAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1_000);
+  const exhausted = selectRoutingAccount({
+    policy: "quota_balanced",
+    members: [
+      member("spent", {
+        quotaWindows: [{ id: "7d", usedRatio: 1, resetAt }],
+      }),
+    ],
+    now,
+    modelId: "openai/gpt-6-astra",
+    requestKey: "spent-plan",
+  });
+  const stale = selectRoutingAccount({
+    policy: "quota_balanced",
+    members: [
+      member("stale", {
+        quotaObservedAt: new Date(now.getTime() - 60 * 60 * 1_000),
+      }),
+    ],
+    now,
+    modelId: "openai/gpt-6-astra",
+    requestKey: "stale-plan",
+    quotaMaxAgeMs: 15 * 60 * 1_000,
+  });
+
+  assert.equal(exhausted.kind, "unavailable");
+  if (exhausted.kind === "unavailable") {
+    assert.equal(exhausted.reason, "quota_exhausted");
+    assert.equal(exhausted.retryAt?.toISOString(), resetAt.toISOString());
+  }
+  assert.equal(stale.kind, "unavailable");
+  if (stale.kind === "unavailable") assert.equal(stale.reason, "quota");
+});
+
 test("traffic-share ceilings use one-request deficit tolerance at an exact share", () => {
   const result = selectRoutingAccount({
     policy: "least_utilized",

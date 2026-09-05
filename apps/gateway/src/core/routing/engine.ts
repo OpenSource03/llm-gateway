@@ -322,6 +322,26 @@ export const selectRoutingAccount = (
   }
 
   const allReasons = [...evaluations.values()].flatMap((e) => e.reasons);
+  const otherwiseRoutable = [...evaluations.values()].filter(
+    ({ reasons }) =>
+      !reasons.some((reason) =>
+        [
+          "disabled",
+          "model_unavailable",
+          "authentication",
+          "concurrency",
+          "daily_request_cap",
+          "daily_input_cap",
+          "daily_output_cap",
+          "traffic_share",
+        ].includes(reason),
+      ),
+  );
+  const confirmedQuotaExhausted =
+    otherwiseRoutable.length > 0 &&
+    otherwiseRoutable.every(({ reasons }) =>
+      reasons.includes("quota_exhausted"),
+    );
   const quotaOnly = allReasons.some((reason) =>
     ["quota_exhausted", "quota_stale", "quota_unknown", "cooldown"].includes(
       reason,
@@ -339,9 +359,11 @@ export const selectRoutingAccount = (
   const retryTimes = [...evaluations.values()]
     .map((e) => e.retryAt)
     .filter((date): date is Date => date instanceof Date);
-  let reason: "accounts" | "capacity" | "quota" = "accounts";
+  let reason: "accounts" | "capacity" | "quota" | "quota_exhausted" =
+    "accounts";
 
-  if (quotaOnly) reason = "quota";
+  if (confirmedQuotaExhausted) reason = "quota_exhausted";
+  else if (quotaOnly) reason = "quota";
   else if (capacityOnly) reason = "capacity";
 
   return {
