@@ -44,6 +44,7 @@ services:
     restart: "no"
 
   gateway:
+    stop_grace_period: 12m
     build:
       context: ../..
       target: runtime

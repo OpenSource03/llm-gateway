@@ -63,7 +63,9 @@ const shutdown = async (signal: string): Promise<void> => {
   if (shuttingDown) return;
   shuttingDown = true;
   Logger.info("Gateway shutdown started", { signal });
-  const deadline = setTimeout(() => process.exit(1), 15_000);
+  // Inference may run for ten minutes. Let accepted streams finish before
+  // closing the database; deployment stop timeouts must allow this drain.
+  const deadline = setTimeout(() => process.exit(1), 11 * 60_000);
 
   deadline.unref();
   await Promise.all(

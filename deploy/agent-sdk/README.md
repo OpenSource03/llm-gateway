@@ -49,13 +49,6 @@ docker compose \
   up -d --build
 ```
 
-The overlay admits two concurrent Claude SDK subprocesses by default and queues
-additional requests inside Meridian. This is the verified separate-session
-budget for a single subscription profile and prevents a high Codex subagent
-limit from becoming an upstream request burst. Set
-`GATEWAY_ANTHROPIC_AGENT_SDK_MAX_CONCURRENT` only after testing independent
-native sessions for every linked profile.
-
 The sidecar has no published host port. Its API key is distinct from every
 gateway control/data key, and the gateway accepts plain HTTP only because both
 containers share one private Compose network.

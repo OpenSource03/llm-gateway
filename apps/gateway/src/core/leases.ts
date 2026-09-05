@@ -58,9 +58,9 @@ export const isLeaseContentionError = (error: unknown): boolean => {
 };
 
 /**
- * Atomically claim one deterministic lease row. An expired row is removed
- * inside the same serializable transaction before the create. Concurrent
- * claimants race on the primary key; exactly one succeeds.
+ * Atomically insert or reclaim one expired lease. The unique key arbitrates
+ * contenders for the same slot without serializable predicate conflicts
+ * rejecting independent requests on unrelated slots.
  */
 export const tryAcquireLease = async (input: {
   kind: LeaseKind;
@@ -76,44 +76,31 @@ export const tryAcquireLease = async (input: {
   const expiresAt = new Date(now.getTime() + input.ttlMs);
   const leaseKey = keyFor(input.kind, input.resourceId, slot);
 
-  try {
-    const lease = await llmGatewayPrisma.$transaction(
-      async (tx) => {
-        await tx.gatewayLease.deleteMany({
-          where: { leaseKey, expiresAt: { lte: now } },
-        });
+  const rows = await llmGatewayPrisma.$queryRaw<LeaseHandle[]>`
+    WITH inserted AS (
+      INSERT INTO "GatewayLease"
+        ("leaseKey", "kind", "resourceId", "slot", "ownerId",
+         "acquiredAt", "heartbeatAt", "expiresAt")
+      VALUES
+        (${leaseKey}, ${input.kind}::"GatewayLeaseKind", ${input.resourceId},
+         ${slot}, ${ownerId}, ${now}, ${now}, ${expiresAt})
+      ON CONFLICT DO NOTHING
+      RETURNING "leaseKey", "kind", "resourceId", "slot", "ownerId", "expiresAt"
+    ), reclaimed AS (
+      UPDATE "GatewayLease" SET
+        "ownerId" = ${ownerId},
+        "acquiredAt" = ${now},
+        "heartbeatAt" = ${now},
+        "expiresAt" = ${expiresAt}
+      WHERE "leaseKey" = ${leaseKey} AND "expiresAt" <= ${now}
+      RETURNING "leaseKey", "kind", "resourceId", "slot", "ownerId", "expiresAt"
+    )
+    SELECT * FROM inserted
+    UNION ALL
+    SELECT * FROM reclaimed
+  `;
 
-        return tx.gatewayLease.create({
-          data: {
-            leaseKey,
-            kind: input.kind,
-            resourceId: input.resourceId,
-            slot,
-            ownerId,
-            acquiredAt: now,
-            heartbeatAt: now,
-            expiresAt,
-          },
-        });
-      },
-      { isolationLevel: "Serializable", maxWait: 5_000, timeout: 10_000 },
-    );
-
-    return {
-      leaseKey: lease.leaseKey,
-      kind: lease.kind,
-      resourceId: lease.resourceId,
-      slot: lease.slot,
-      ownerId: lease.ownerId,
-      expiresAt: lease.expiresAt,
-    };
-  } catch (error) {
-    // Unique/serialization races are normal lease contention. Connectivity,
-    // authorization, and other database failures must surface instead of
-    // masquerading as a configured concurrency limit.
-    if (isLeaseContentionError(error)) return null;
-    throw error;
-  }
+  return rows[0] ?? null;
 };
 
 /** Claim the first available slot under a distributed concurrency limit. */

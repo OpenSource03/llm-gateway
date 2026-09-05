@@ -269,6 +269,28 @@ test(
 
       assert.deepEqual([...principal.allowedModelIds], [model.publicModelId]);
 
+      // Independent unlimited requests must not be rejected by PostgreSQL
+      // serialization conflicts between unrelated lease keys.
+      const parallelLeases = await Promise.all(
+        Array.from({ length: 30 }, () =>
+          leases.tryAcquireConcurrencyLease({
+            kind: "CLIENT_CONCURRENCY",
+            resourceId: created.id,
+            maxConcurrency: null,
+            ttlMs: 30_000,
+          }),
+        ),
+      );
+      try {
+        assert.equal(
+          parallelLeases.filter(Boolean).length,
+          30,
+          "unlimited concurrent requests must all acquire independent leases",
+        );
+      } finally {
+        await leases.releaseLeases(parallelLeases);
+      }
+
       const first = await leases.tryAcquireConcurrencyLease({
         kind: "CLIENT_CONCURRENCY",
         resourceId: created.id,
@@ -296,6 +318,49 @@ test(
 
       assert.ok(reclaimed);
       await leases.releaseLease(reclaimed);
+
+      const contenders = await Promise.all(
+        Array.from({ length: 30 }, () =>
+          leases.tryAcquireConcurrencyLease({
+            kind: "CLIENT_CONCURRENCY",
+            resourceId: created.id,
+            maxConcurrency: 1,
+            ttlMs: 30_000,
+          }),
+        ),
+      );
+      try {
+        assert.equal(contenders.filter(Boolean).length, 1);
+        const winner = contenders.find((lease) => lease !== null)!;
+        // Reclaim an expired row under concurrent callers; the old owner
+        // must not be able to heartbeat or release the replacement.
+        await prisma.gatewayLease.update({
+          where: { leaseKey: winner.leaseKey },
+          data: { expiresAt: new Date(Date.now() - 1_000) },
+        });
+        const replacements = await Promise.all(
+          Array.from({ length: 30 }, () =>
+            leases.tryAcquireConcurrencyLease({
+              kind: "CLIENT_CONCURRENCY",
+              resourceId: created.id,
+              maxConcurrency: 1,
+              ttlMs: 30_000,
+            }),
+          ),
+        );
+        try {
+          assert.equal(replacements.filter(Boolean).length, 1);
+          const replacement = replacements.find((lease) => lease !== null)!;
+          assert.notEqual(replacement.ownerId, winner.ownerId);
+          assert.equal(await leases.heartbeatLease(winner, 30_000), false);
+          await leases.releaseLease(winner);
+          assert.equal(await leases.heartbeatLease(replacement, 30_000), true);
+        } finally {
+          await leases.releaseLeases(replacements);
+        }
+      } finally {
+        await leases.releaseLeases(contenders);
+      }
 
       const reservations = await Promise.allSettled([
         keyService.reserveClientDailyCapacity(principal, {
