@@ -3,6 +3,7 @@ const JSON_MAX_NODES = 50_000;
 const JSON_MAX_KEYS_PER_OBJECT = 5_000;
 
 export const JSON_MAX_STRING_LENGTH = 2 * 1024 * 1024;
+export const JSON_MAX_IMAGE_URL_LENGTH = 8 * 1024 * 1024;
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -22,14 +23,18 @@ export const assertAllowedKeys = (
 
 export const assertBoundedJsonValue = (value: unknown, path: string): void => {
   let nodes = 0;
-  const visit = (current: unknown, depth: number): void => {
+  const visit = (
+    current: unknown,
+    depth: number,
+    maxStringLength = JSON_MAX_STRING_LENGTH,
+  ): void => {
     nodes += 1;
     if (nodes > JSON_MAX_NODES)
       throw new TypeError(`${path} contains too many values`);
     if (depth > JSON_MAX_DEPTH)
       throw new TypeError(`${path} is nested too deeply`);
     if (typeof current === "string") {
-      if (current.length > JSON_MAX_STRING_LENGTH)
+      if (current.length > maxStringLength)
         throw new TypeError(`${path} contains an oversized string`);
 
       return;
@@ -54,7 +59,16 @@ export const assertBoundedJsonValue = (value: unknown, path: string): void => {
       for (const [key, item] of entries) {
         if (key.length > 1_000)
           throw new TypeError(`${path} contains an oversized object key`);
-        visit(item, depth + 1);
+        const inlineImage =
+          current.type === "input_image" &&
+          key === "image_url" &&
+          typeof item === "string" &&
+          /^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(item);
+        visit(
+          item,
+          depth + 1,
+          inlineImage ? JSON_MAX_IMAGE_URL_LENGTH : JSON_MAX_STRING_LENGTH,
+        );
       }
 
       return;

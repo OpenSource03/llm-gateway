@@ -23,7 +23,9 @@ import { assertAnthropicMessagesRequest } from "./wire/anthropic";
 import { parseCodexResponsesRequest } from "./wire/codex-responses";
 import { parseCodexSearchRequest } from "./wire/codex-search";
 
-const MAX_REQUEST_BYTES = 10 * 1024 * 1024;
+// Image-heavy native histories can exceed 10 MiB while remaining within the
+// model's token window. Bound serialized transport bytes independently.
+const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 
 export const codexRequestSessionHeaders = (
   headers: Headers,
@@ -245,12 +247,13 @@ app.get("/v1/models", async (c) => {
 
 app.post("/v1/responses", async (c) => {
   try {
-    // Authenticate before cloning or parsing a potentially large request body.
+    // Authenticate before parsing. Read once: cloning leaves an unread tee
+    // branch that can retain the body and prevent cancellation from finishing.
     const auth = await authenticateDataPlaneRequest(
       c.req.header("Authorization"),
       clientAddress(c.req.raw),
     );
-    const request = await readCodexResponsesRequest(c.req.raw.clone());
+    const request = await readCodexResponsesRequest(c.req.raw);
     const models = await publicCodexGatewayModels(auth.principal);
     const requestWithSpawnCatalog = injectSpawnAgentModelCatalog(
       request,
@@ -280,7 +283,7 @@ app.post("/v1/alpha/search", async (c) => {
       c.req.header("Authorization"),
       clientAddress(c.req.raw),
     );
-    const request = await readCodexSearchRequest(c.req.raw.clone());
+    const request = await readCodexSearchRequest(c.req.raw);
     const sessionHeader =
       c.req.header("session-id") ??
       c.req.header("x-client-request-id") ??
@@ -303,7 +306,7 @@ app.post("/v1/messages", async (c) => {
       c.req.header("Authorization"),
       clientAddress(c.req.raw),
     );
-    const request = await readMessagesRequest(c.req.raw.clone());
+    const request = await readMessagesRequest(c.req.raw);
 
     return await proxyMessagesRequest({
       principal: auth.principal,
@@ -322,7 +325,7 @@ app.post("/v1/messages/count_tokens", async (c) => {
       c.req.header("Authorization"),
       clientAddress(c.req.raw),
     );
-    const request = await readMessagesRequest(c.req.raw.clone(), {
+    const request = await readMessagesRequest(c.req.raw, {
       requireMaxTokens: false,
     });
 

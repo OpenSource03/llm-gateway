@@ -43,9 +43,6 @@ export const readBoundedRequestBody = async (
       if (result.done) break;
       total += result.value.byteLength;
       if (total > maxBytes) {
-        await reader
-          .cancel("Request body exceeded the gateway limit")
-          .catch(() => undefined);
         throw new GatewayError(
           "Request body is too large",
           413,
@@ -55,7 +52,9 @@ export const readBoundedRequestBody = async (
       chunks.push(result.value);
     }
   } catch (error) {
-    await reader.cancel(error).catch(() => undefined);
+    // A tee branch or a broken transport can keep cancel() pending forever.
+    // Start cancellation but never let cleanup prevent the bounded rejection.
+    void reader.cancel(error).catch(() => undefined);
     if (error instanceof GatewayError) throw error;
     if (timeoutController.signal.aborted) {
       throw new GatewayError(

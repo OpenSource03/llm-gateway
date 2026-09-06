@@ -79,6 +79,43 @@ test("accepts Astra ultra reasoning effort", () => {
   assert.deepEqual(request.reasoning, { effort: "ultra", summary: "auto" });
 });
 
+test("accepts large inline screenshots while retaining image and text bounds", () => {
+  const imageUrl = "data:image/png;base64," + "A".repeat(3 * 1024 * 1024);
+  const input = [
+    {
+      type: "custom_tool_call_output",
+      call_id: "screenshot",
+      output: [{ type: "input_image", image_url: imageUrl }],
+    },
+  ];
+  const request = parseCodexResponsesRequest({ ...validRequest(), input });
+  assert.deepEqual(request.input, input);
+  for (const output of [
+    [
+      {
+        type: "input_image",
+        image_url: "data:image/png;base64," + "A".repeat(8 * 1024 * 1024),
+      },
+    ],
+    [{ type: "input_text", text: "A".repeat(3 * 1024 * 1024) }],
+    [
+      {
+        type: "input_image",
+        image_url: "https://example.invalid/" + "A".repeat(3 * 1024 * 1024),
+      },
+    ],
+  ]) {
+    assert.throws(
+      () =>
+        parseCodexResponsesRequest({
+          ...validRequest(),
+          input: [{ ...input[0], output }],
+        }),
+      /oversized string/,
+    );
+  }
+});
+
 test("rejects unknown top-level Responses fields", () => {
   assert.throws(
     () =>

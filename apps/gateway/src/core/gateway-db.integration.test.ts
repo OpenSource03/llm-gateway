@@ -78,6 +78,57 @@ test(
       });
 
       assert.notEqual(stored.keyHash, created.key);
+
+      const { default: dataRoutes } = await import("./data-plane.routes");
+      const body = JSON.stringify({
+        model: "openai/" + marker,
+        stream: true,
+        store: false,
+        input: Array.from({ length: 12 }, () => ({
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "a".repeat(1024 * 1024) }],
+        })),
+      });
+      const large = await dataRoutes.request("/v1/responses", {
+        method: "POST",
+        headers: { authorization: "Bearer " + created.key },
+        body,
+      });
+      assert.equal(large.status, 404);
+      assert.equal((await large.json()).error.code, "MODEL_NOT_FOUND");
+      // Parsing reached model resolution without dispatching any provider
+      // request. Oversized chunked bodies must fail promptly after auth.
+      let cancelled = false;
+      let rejectionTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const oversized = await Promise.race([
+          dataRoutes.request("/v1/responses", {
+            method: "POST",
+            headers: { authorization: "Bearer " + created.key },
+            body: new ReadableStream({
+              start(controller) {
+                controller.enqueue(new Uint8Array(33 * 1024 * 1024));
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            duplex: "half",
+          } as RequestInit & { duplex: "half" }),
+          new Promise<never>((_, reject) => {
+            rejectionTimer = setTimeout(
+              () => reject(new Error("Oversized body rejection hung")),
+              2_000,
+            );
+          }),
+        ]);
+        assert.equal(oversized.status, 413);
+        assert.equal((await oversized.json()).error.code, "REQUEST_TOO_LARGE");
+        assert.equal(cancelled, true);
+      } finally {
+        clearTimeout(rejectionTimer);
+      }
       assert.equal(
         JSON.stringify(stored, (_, value) =>
           typeof value === "bigint" ? value.toString() : value,

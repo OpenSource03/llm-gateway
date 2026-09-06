@@ -70,3 +70,58 @@ test("bounded request cancels a stalled body at its deadline", async () => {
   );
   assert.equal(cancelled, true);
 });
+
+test("oversize rejection does not wait for an unread cloned branch", async () => {
+  const request = new Request("https://gateway.invalid/messages", {
+    method: "POST",
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(16));
+      },
+    }),
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await assert.rejects(
+      Promise.race([
+        readBoundedRequestBody(request.clone(), 8),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Rejection hung")), 500);
+        }),
+      ]),
+      (error: unknown) =>
+        error instanceof GatewayError && error.code === "REQUEST_TOO_LARGE",
+    );
+  } finally {
+    clearTimeout(timer);
+    await request.body!.cancel();
+  }
+});
+
+test("body deadline does not wait for a stalled transport cancellation", async () => {
+  const request = new Request("https://gateway.invalid/messages", {
+    method: "POST",
+    body: new ReadableStream({
+      cancel() {
+        return new Promise(() => undefined);
+      },
+    }),
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await assert.rejects(
+      Promise.race([
+        readBoundedRequestBody(request, 8, 10),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Rejection hung")), 500);
+        }),
+      ]),
+      (error: unknown) =>
+        error instanceof GatewayError && error.code === "REQUEST_BODY_TIMEOUT",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+});
