@@ -236,6 +236,11 @@ export function createAntigravityProviderAdapter(
     },
 
     async refresh(secret, signal) {
+      if (secret.kind === "access-token")
+        throw new ProviderProtocolError(
+          "Access tokens cannot be refreshed",
+          401,
+        );
       const payload = await tokenRequest(
         deps,
         {

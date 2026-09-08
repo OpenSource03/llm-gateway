@@ -427,9 +427,18 @@ export function codexToAnthropic(
         ? { tools: cachedTools, tool_choice: toolChoice }
         : {}),
       ...(thinking ? { thinking } : {}),
-      context_management: {
-        edits: [{ type: "clear_thinking_20251015", keep: "all" }],
-      },
+      ...(thinking
+        ? {
+            context_management: {
+              edits: [
+                {
+                  type: "clear_thinking_20251015" as const,
+                  keep: "all" as const,
+                },
+              ],
+            },
+          }
+        : {}),
       ...(outputEffort ? { output_config: { effort: outputEffort } } : {}),
     },
     toolIdentities: identities,

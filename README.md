@@ -355,3 +355,12 @@ Provider compatibility is deliberately isolated behind adapter contracts. See
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+### Claude Code OAuth token accounts
+
+You can add a **new** Claude account using an OAuth access token through the
+control API, `llmgw accounts add-oauth-token`, or Arcademy Admin. Both Direct and
+Agent SDK inference are supported. Tokens are encrypted, cannot be refreshed,
+and require creating a replacement account when expired. See
+[Claude OAuth token accounts](docs/claude-oauth-tokens.md) for setup, probe
+budgets, quota freshness, and the required SDK sidecar update.

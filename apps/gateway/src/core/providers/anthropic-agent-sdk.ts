@@ -369,6 +369,80 @@ export class AnthropicAgentSdkTransport {
     this.#deps = { ...DEFAULT_ADAPTER_DEPENDENCIES, ...dependencies };
   }
 
+  async tokenQuota(
+    transport: ExternalTransportReference,
+    upstreamModel: string,
+    signal?: AbortSignal,
+  ): Promise<QuotaSnapshot> {
+    const response = await fetchWithTimeout(
+      this.#deps.fetch,
+      endpoint(this.#config, `/gateway/token-quota/${profileId(transport)}`),
+      { headers: serviceHeaders(this.#config), redirect: "error" },
+      5_000,
+      signal,
+    );
+    const payload = assertRecord(
+      await expectJson(
+        response,
+        "SDK quota observations",
+        CONTROL_RESPONSE_LIMIT,
+      ),
+      "SDK quota observations",
+    );
+    if (payload.profile !== transport.profileId)
+      throw new ProviderProtocolError("SDK quota profile mismatch");
+    const windows: QuotaWindow[] = [];
+    let observedAt = 0;
+    for (const raw of Array.isArray(payload.buckets)
+      ? payload.buckets.slice(0, 32)
+      : []) {
+      if (!isRecord(raw)) continue;
+      const type = nonEmptyString(raw.type);
+      const used = finiteNumber(raw.utilization);
+      const timestamp = finiteNumber(raw.observedAt);
+      if (
+        !type ||
+        !timestamp ||
+        (used === undefined && raw.status !== "rejected")
+      )
+        continue;
+      const id =
+        type === "five_hour" || type === "seven_day"
+          ? type
+          : type === "seven_day_overage_included"
+            ? "seven_day_overage_included"
+            : undefined;
+      if (
+        !id ||
+        (id === "seven_day_overage_included" && raw.model !== upstreamModel)
+      )
+        continue;
+      observedAt = Math.max(observedAt, timestamp);
+      windows.push({
+        id,
+        label: id,
+        observedAt: timestamp,
+        usedFraction: used === undefined ? undefined : clampFraction(used),
+        remainingFraction:
+          used === undefined ? undefined : 1 - clampFraction(used),
+        allowed: raw.status !== "rejected",
+        status: raw.status === "rejected" ? "exhausted" : quotaStatus(used),
+        ...(id === "seven_day_overage_included"
+          ? { scope: "requested-model", meterKey: id }
+          : {}),
+        ...(finiteNumber(raw.resetsAt)
+          ? { resetsAt: finiteNumber(raw.resetsAt)! }
+          : {}),
+      });
+    }
+    return {
+      provider: "anthropic",
+      fetchedAt: observedAt || this.#deps.now(),
+      windows,
+      metadata: { source: "sdk-events" },
+    };
+  }
+
   async listProfiles(
     signal?: AbortSignal,
   ): Promise<ExternalTransportProfile[]> {
@@ -462,6 +536,17 @@ export class AnthropicAgentSdkTransport {
       "passthrough",
     );
 
+    if (input.transport.tokenBacked) {
+      if (
+        input.secret?.kind !== "access-token" ||
+        !input.transport.profileId.startsWith("gw-token-")
+      )
+        throw new ProviderProtocolError(
+          "Token profile credential is unavailable",
+          401,
+        );
+      headers.set("x-llmgw-oauth-token", input.secret.accessToken);
+    }
     headers.set("anthropic-version", "2023-06-01");
     if (input.sessionId) {
       headers.set("x-litellm-session-id", input.sessionId);
@@ -504,6 +589,17 @@ export class AnthropicAgentSdkTransport {
     // independent without giving up shared prompt-cache affinity upstream.
     const sessionId = input.sessionId ?? input.request.prompt_cache_key;
 
+    if (input.transport.tokenBacked) {
+      if (
+        input.secret?.kind !== "access-token" ||
+        !input.transport.profileId.startsWith("gw-token-")
+      )
+        throw new ProviderProtocolError(
+          "Token profile credential is unavailable",
+          401,
+        );
+      headers.set("x-llmgw-oauth-token", input.secret.accessToken);
+    }
     headers.set("anthropic-version", "2023-06-01");
     if (sessionId) headers.set("x-codex-session", sessionId);
 

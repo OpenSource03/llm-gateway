@@ -85,3 +85,11 @@ rejected unless a direct credential exists.
 
 Keep Meridian private. For separate hosts, use HTTPS and omit
 `GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE`.
+
+Gateway-owned OAuth token accounts use the version-checked `token-profiles`
+patch. The gateway supplies the account token only over the authenticated
+private bridge request; the bridge injects it into that profile's isolated SDK
+subprocess without writing it to `profiles.json`. Keep `/tmp` on tmpfs. The
+private `/gateway/token-quota/:profile` endpoint exposes structural SDK quota
+observations, including their model and timestamp. See
+[the token account guide](../../docs/claude-oauth-tokens.md).

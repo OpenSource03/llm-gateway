@@ -371,7 +371,9 @@ export interface RoutedAccount {
   usageReservation: GatewayAccountUsageReservation;
   sessionHash: string | null;
   identity: ProviderIdentity;
-  transport: { id: "direct" } | { id: "agent-sdk"; profileId: string };
+  transport:
+    | { id: "direct" }
+    | { id: "agent-sdk"; profileId: string; tokenBacked?: boolean };
 }
 
 export const routeAccount = async (input: {
@@ -570,6 +572,7 @@ export const routeAccount = async (input: {
         ? {
             id: "agent-sdk",
             profileId: selectedAccount.transportProfileId!,
+            tokenBacked: selectedAccount.authenticationMethod === "oauth-token",
           }
         : { id: "direct" },
   };
@@ -581,6 +584,37 @@ export const persistGatewayHeaderQuota = async (
   snapshot: QuotaSnapshot,
 ): Promise<void> => {
   if (snapshot.windows.length === 0) return;
+  const origin = await llmGatewayPrisma.gatewayProviderAccount.findUnique({
+    where: { id: accountId },
+    select: {
+      provider: true,
+      authenticationMethod: true,
+      externalWorkspaceId: true,
+    },
+  });
+  if (!origin) return;
+  const org = snapshot.metadata?.organizationId;
+  if (
+    origin.authenticationMethod === "oauth-token" &&
+    typeof org === "string" &&
+    /^[0-9a-f-]{36}$/i.test(org)
+  ) {
+    // Header belongs to an adapter-owned upstream response, never caller input.
+    await llmGatewayPrisma.gatewayProviderAccount.update({
+      where: { id: accountId },
+      data: { externalWorkspaceId: org },
+    });
+    origin.externalWorkspaceId = org;
+  }
+  // Organization membership alone does not establish shared subscription quota.
+  await persistAccountHeaderQuota(accountId, modelId, snapshot);
+};
+
+const persistAccountHeaderQuota = async (
+  accountId: string,
+  modelId: string,
+  snapshot: QuotaSnapshot,
+): Promise<void> => {
   const data = snapshot.windows.map((window) => ({
     accountId,
     // Provider-wide headers (Claude unified windows, Codex primary/
@@ -601,7 +635,7 @@ export const persistGatewayHeaderQuota = async (
           : Math.round(Math.max(0, Math.min(1, window.usedFraction)) * 10_000),
     resetAt: window.resetsAt ? new Date(window.resetsAt) : null,
     source: "RESPONSE_HEADER" as const,
-    observedAt: new Date(snapshot.fetchedAt),
+    observedAt: new Date(window.observedAt ?? snapshot.fetchedAt),
   }));
 
   await llmGatewayPrisma.$transaction(

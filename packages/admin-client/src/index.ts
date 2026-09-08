@@ -1,3 +1,4 @@
+import type { CreateOAuthTokenInput } from "@opensource03/llm-gateway-contracts";
 import type {
   ApiEnvelope,
   ApiPage,
@@ -16,6 +17,7 @@ import type {
   GatewayOAuthAttempt,
   GatewayProviderAccount,
   GatewayRequestRow,
+  GatewayUsageReport,
   GatewayRoutingPool,
   GatewayStatus,
   LinkExternalProfileInput,
@@ -222,6 +224,16 @@ export class GatewayAdminClient {
     (
       await this.#request<ApiEnvelope<GatewayProviderAccount>>(
         "/accounts/external-profiles",
+        { method: "POST", body: JSON.stringify(input) },
+      )
+    ).data;
+
+  createOAuthToken = async (
+    input: CreateOAuthTokenInput,
+  ): Promise<GatewayProviderAccount> =>
+    (
+      await this.#request<ApiEnvelope<GatewayProviderAccount>>(
+        "/accounts/oauth-tokens",
         { method: "POST", body: JSON.stringify(input) },
       )
     ).data;
@@ -439,6 +451,36 @@ export class GatewayAdminClient {
         { method: "DELETE" },
       )
     ).data;
+
+  getUsage = async (
+    filters: {
+      from?: string;
+      to?: string;
+      interval?: "hour" | "day";
+      provider?: string;
+      accountId?: string;
+      model?: string;
+      clientKeyId?: string;
+    } = {},
+  ): Promise<GatewayUsageReport> => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value)
+        query.set(
+          key === "accountId"
+            ? "account_id"
+            : key === "clientKeyId"
+              ? "client_key_id"
+              : key,
+          value,
+        );
+    }
+    return (
+      await this.#request<ApiEnvelope<GatewayUsageReport>>(
+        `/requests/usage?${query}`,
+      )
+    ).data;
+  };
 
   listRequests = async (query = ""): Promise<ApiPage<GatewayRequestRow>> =>
     this.#request<ApiPage<GatewayRequestRow>>(`/requests${query}`);

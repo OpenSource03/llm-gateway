@@ -15,11 +15,8 @@ export type ProviderModelMetadataValue =
 export type ProviderModelMetadata = Record<string, ProviderModelMetadataValue>;
 
 /** Plaintext credential material. It must never be logged or stored unencrypted. */
-export interface OAuthSecret {
+interface CredentialBase {
   accessToken: string;
-  refreshToken: string;
-  /** Epoch milliseconds. A five-minute safety skew is already applied. */
-  expiresAt: number;
   idToken?: string;
   /**
    * Provider-owned, non-secret routing metadata stored inside the encrypted
@@ -28,6 +25,12 @@ export interface OAuthSecret {
    */
   metadata?: Record<string, string>;
 }
+
+export type OAuthSecret = CredentialBase &
+  (
+    | { kind?: "oauth"; refreshToken: string; expiresAt: number }
+    | { kind: "access-token"; refreshToken?: never; expiresAt: null }
+  );
 
 export interface ProviderIdentity {
   /** Stable provider subject/account id. */
@@ -119,6 +122,7 @@ export interface ProviderDiscovery {
 }
 
 export interface QuotaWindow {
+  observedAt?: number;
   id: string;
   label: string;
   /** Stable provider meter shared by model-scoped windows. */
@@ -200,6 +204,8 @@ export interface PrepareResponsesInferenceInput {
 export interface ExternalTransportReference {
   id: string;
   profileId: string;
+  /** Gateway-owned profile whose credential is supplied only in private requests. */
+  tokenBacked?: boolean;
 }
 
 export interface ExternalTransportProfile {
@@ -215,6 +221,7 @@ export interface PrepareExternalInferenceInput extends Omit<
   "secret"
 > {
   transport: ExternalTransportReference;
+  secret?: OAuthSecret;
 }
 
 export interface PrepareExternalResponsesInferenceInput extends Omit<
@@ -222,6 +229,7 @@ export interface PrepareExternalResponsesInferenceInput extends Omit<
   "secret"
 > {
   transport: ExternalTransportReference;
+  secret?: OAuthSecret;
 }
 
 export interface PrepareSearchInput {
@@ -298,6 +306,7 @@ export interface SubscriptionProviderAdapter {
     signal?: AbortSignal,
   ): Promise<ProviderAccessVerification>;
   prepareInference(input: PrepareInferenceInput): Promise<PreparedUpstream>;
+  prepareQuotaProbe?(input: PrepareInferenceInput): Promise<PreparedUpstream>;
   /** Codex Responses lane. Every enabled provider must implement this contract. */
   prepareResponsesInference(
     input: PrepareResponsesInferenceInput,

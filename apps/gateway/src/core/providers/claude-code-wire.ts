@@ -16,9 +16,9 @@ import {
 } from "./shared";
 
 export const CLAUDE_CODE = {
-  version: "2.1.247",
+  version: "2.1.260",
   promptVariant: "f3e",
-  userAgent: "claude-cli/2.1.247 (external, cli)",
+  userAgent: "claude-cli/2.1.260 (external, cli)",
   sdkPackageVersion: "0.112.1",
   runtimeVersion: "v26.3.0",
 } as const;

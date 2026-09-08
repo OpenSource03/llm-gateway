@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import {
   completeOAuthSchema,
+  createOAuthTokenSchema,
   createClientKeySchema,
   controlOpenApiDocument,
   createControlKeySchema,
@@ -25,6 +26,7 @@ import { zValidator } from "../shared/hono-validator";
 
 import {
   completeOAuthAttempt,
+  createGatewayTokenAccount,
   deleteGatewayAccount,
   getOAuthAttempt,
   listGatewayAccounts,
@@ -55,6 +57,8 @@ import {
   updateRoutingMember,
   updateRoutingPool,
 } from "./routing.service";
+import { getGatewayUsage } from "./usage.service";
+import { usageQuery } from "./usage-query";
 import { listGatewayRequestHistory } from "./history.service";
 import { listGatewayAudit } from "./audit.service";
 import {
@@ -128,6 +132,7 @@ app.get("/status", (c) => {
       role: env.GATEWAY_ROLE,
       publicBaseUrl: env.GATEWAY_PUBLIC_URL.replace(/\/$/, ""),
       providers: adapters.map(({ id }) => id),
+      oauthTokenAccounts: adapters.some(({ id }) => id === "anthropic"),
       transports: Object.fromEntries(
         adapters.map((adapter) => [
           adapter.id,
@@ -145,6 +150,23 @@ app.get("/status", (c) => {
     },
   });
 });
+
+app.post(
+  "/accounts/oauth-tokens",
+  zValidator("json", createOAuthTokenSchema),
+  async (c) =>
+    c.json(
+      {
+        success: true,
+        data: await createGatewayTokenAccount(
+          c.get("controlPrincipal").actor,
+          c.req.valid("json"),
+          c.req.raw.signal,
+        ),
+      },
+      201,
+    ),
+);
 
 app.get("/accounts", async (c) =>
   c.json({ success: true, data: await listGatewayAccounts() }),
@@ -468,6 +490,16 @@ app.delete("/client-keys/:id", zValidator("param", idParams), async (c) =>
   c.json({
     success: true,
     data: await revokeGatewayClientKey(c.req.valid("param").id),
+  }),
+);
+
+app.get("/requests/usage", zValidator("query", usageQuery), async (c) =>
+  c.json({
+    success: true,
+    data: await getGatewayUsage(
+      c.req.valid("query"),
+      c.get("controlPrincipal").scopes.has("accounts:read"),
+    ),
   }),
 );
 

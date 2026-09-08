@@ -1,3 +1,4 @@
+import { collectTokenSdkQuota } from "../../control/token-quota.service";
 import type { GatewayClientPrincipal } from "../../control/client-keys.service";
 
 import {
@@ -37,7 +38,9 @@ import {
 } from "./routing";
 import {
   extractResponseUsage,
+  GatewayStreamError,
   type ObservedUsage,
+  type StreamDiagnostics,
   wrapStreamLifecycle,
 } from "./stream-lifecycle";
 import {
@@ -292,12 +295,15 @@ const proxyGatewayRequest = async (
           }),
         ]);
 
-      if (routed.transport.id === "direct") {
+      if (routed.transport.id === "direct" || routed.transport.tokenBacked) {
         try {
           leaseGuard.throwIfFailed();
           credential = await loadCredential(routed.accountId);
 
-          if (credential.secret.expiresAt <= Date.now() + 5 * 60 * 1000) {
+          if (
+            credential.secret.expiresAt !== null &&
+            credential.secret.expiresAt <= Date.now() + 5 * 60 * 1000
+          ) {
             await refreshGatewayAccount(routed.accountId, {
               refreshCredential: true,
               signal: upstreamSignal,
@@ -362,6 +368,7 @@ const proxyGatewayRequest = async (
             identity: routed.identity,
             providerMetadata,
             transport: routed.transport,
+            secret: credential?.secret,
             sessionId: providerSessionId ?? undefined,
             projectedInputTokens: estimatedInputTokens,
             projectedOutputTokens,
@@ -384,6 +391,7 @@ const proxyGatewayRequest = async (
             identity: routed.identity,
             providerMetadata,
             transport: routed.transport,
+            secret: credential?.secret,
             sessionId: providerSessionId ?? undefined,
             projectedInputTokens: estimatedInputTokens,
             projectedOutputTokens,
@@ -500,6 +508,10 @@ const proxyGatewayRequest = async (
         );
       }
       if (!upstream.ok) {
+        if (routed.transport.id === "agent-sdk" && routed.transport.tokenBacked)
+          await collectTokenSdkQuota(routed.accountId, model.id).catch(
+            () => undefined,
+          );
         const failure = (prepared.classifyFailure ?? adapter.classifyFailure)(
           upstream.status,
           upstream.headers,
@@ -517,6 +529,7 @@ const proxyGatewayRequest = async (
         // subscription the remaining bounded dispatch budget.
         if (
           routed.transport.id === "direct" &&
+          credential?.secret.kind !== "access-token" &&
           failure.reauthenticate &&
           !refreshedAccounts.has(routed.accountId) &&
           attempt + 1 < MAX_UPSTREAM_DISPATCHES
@@ -649,6 +662,7 @@ const proxyGatewayRequest = async (
       const finalize = async (
         error?: unknown,
         streamedUsage?: ObservedUsage,
+        diagnostics?: StreamDiagnostics,
       ) => {
         const observedUsage =
           streamedUsage ??
@@ -664,7 +678,29 @@ const proxyGatewayRequest = async (
         // not zero. Retain the reserved maximum on truncation/cancellation so
         // a client cannot bypass output caps by repeatedly aborting streams.
         const billedOutputTokens = usage.output ?? projectedOutputTokens;
+        const errorClass = error
+          ? error instanceof GatewayStreamError
+            ? error.name
+            : "GatewayStreamAborted"
+          : null;
+        if (diagnostics) {
+          Logger.info("Gateway stream finalized", {
+            requestId: requestLog.id,
+            accountId: routed.accountId,
+            errorClass,
+            ...diagnostics,
+            inputUsageSource:
+              usage.input === undefined ? "reservation" : "provider",
+            outputUsageSource:
+              usage.output === undefined ? "reservation" : "provider",
+            latencyMs: Date.now() - startedAt.getTime(),
+          });
+        }
 
+        if (routed.transport.id === "agent-sdk" && routed.transport.tokenBacked)
+          await collectTokenSdkQuota(routed.accountId, model.id).catch(
+            () => undefined,
+          );
         await Promise.allSettled([
           llmGatewayPrisma.gatewayRequestLog.update({
             where: { id: requestLog.id },
@@ -673,7 +709,7 @@ const proxyGatewayRequest = async (
               routingPolicy: routed.pool.policy,
               statusCode: error ? 502 : response.status,
               outcome: error ? "stream_error" : "success",
-              errorClass: error instanceof Error ? error.name : null,
+              errorClass,
               retryCount: attempt,
               latencyMs: Date.now() - startedAt.getTime(),
               inputTokens: billedInputTokens,
@@ -698,7 +734,11 @@ const proxyGatewayRequest = async (
             where: { id: routed.accountId },
             data: error
               ? {}
-              : { lastSuccessfulRequestAt: new Date(), cooldownUntil: null },
+              : {
+                  lastSuccessfulRequestAt: new Date(),
+                  inferenceReadyAt: new Date(),
+                  cooldownUntil: null,
+                },
           }),
         ]);
       };
@@ -706,6 +746,7 @@ const proxyGatewayRequest = async (
       if (input.request.stream && response.body) {
         return wrapStreamLifecycle(response, leaseGuard, finalize, {
           publicProtocol: prepared.publicProtocol,
+          clientSignal: input.signal,
         });
       }
 

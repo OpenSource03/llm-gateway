@@ -247,6 +247,11 @@ export function createOpenAICodexProviderAdapter(
     },
 
     async refresh(secret, signal) {
+      if (secret.kind === "access-token")
+        throw new ProviderProtocolError(
+          "Access tokens cannot be refreshed",
+          401,
+        );
       const response = await fetchWithTimeout(
         deps.fetch,
         OPENAI_CODEX_ENDPOINTS.token,

@@ -163,6 +163,21 @@ export const startOAuthSchema = z
   })
   .strict();
 
+export const createOAuthTokenSchema = z
+  .object({
+    provider: z.literal("anthropic"),
+    token: z
+      .string()
+      .trim()
+      .min(16)
+      .max(4_096)
+      .regex(/^[A-Za-z0-9_-]+$/),
+    display_name: z.string().trim().min(1).max(120),
+    transport: z.enum(["direct", "agent-sdk"]).default("direct"),
+  })
+  .strict();
+export type CreateOAuthTokenInput = z.infer<typeof createOAuthTokenSchema>;
+
 const oauthCompletionValueSchema = z.string().trim().min(1).max(4_096);
 
 export const completeOAuthSchema = z.union([
@@ -214,6 +229,7 @@ export interface ApiPage<T> extends ApiEnvelope<T[]> {
 }
 
 export interface GatewayStatus {
+  oauthTokenAccounts?: boolean;
   version: string;
   role: "data" | "control" | "worker" | "all";
   publicBaseUrl: string;
@@ -235,6 +251,8 @@ export interface GatewayQuotaWindow {
 }
 
 export interface GatewayProviderAccount {
+  authenticationMethod: "oauth" | "oauth-token";
+  inferenceReady: boolean;
   id: string;
   provider: string;
   email: string | null;
@@ -378,6 +396,9 @@ export interface CreatedGatewayControlKey extends GatewayControlKey {
 }
 
 export interface GatewayRequestRow {
+  tokenUsageBasis?: "conservative_reservation" | "accounted";
+  outcomeExplanation?: string | null;
+  tokenUsageExplanation?: string;
   id: string;
   clientKeyId: string;
   clientKeyName?: string | null;
@@ -509,6 +530,7 @@ export const controlOpenApiDocument = {
     },
     schemas: {
       StartOAuth: z.toJSONSchema(startOAuthSchema),
+      CreateOAuthToken: z.toJSONSchema(createOAuthTokenSchema),
       CompleteOAuth: z.toJSONSchema(completeOAuthSchema),
       LinkExternalProfile: z.toJSONSchema(linkExternalProfileSchema),
       UpdateAccount: z.toJSONSchema(updateAccountSchema),
@@ -527,6 +549,14 @@ export const controlOpenApiDocument = {
     },
     "/status": { get: operation("Get gateway status", null) },
     "/accounts": { get: operation("List provider accounts", "accounts:read") },
+    "/accounts/oauth-tokens": {
+      post: operation(
+        "Create a Claude token account",
+        "accounts:write",
+        "CreateOAuthToken",
+        { successStatus: "201" },
+      ),
+    },
     "/accounts/external-profiles": {
       get: operation(
         "List external transport profiles",
@@ -695,6 +725,28 @@ export const controlOpenApiDocument = {
         parameters: [pathParameter("id")],
       }),
     },
+    "/requests/usage": {
+      get: operation(
+        "Aggregate retained request usage (UTC, at most 90 days; top 100 accounts)",
+        "requests:read",
+        undefined,
+        {
+          parameters: [
+            queryParameter("from", { type: "string", format: "date-time" }),
+            queryParameter("to", { type: "string", format: "date-time" }),
+            queryParameter("interval", {
+              type: "string",
+              enum: ["hour", "day"],
+              default: "day",
+            }),
+            queryParameter("provider", { type: "string" }),
+            queryParameter("account_id", { type: "string", format: "uuid" }),
+            queryParameter("model", { type: "string" }),
+            queryParameter("client_key_id", { type: "string", format: "uuid" }),
+          ],
+        },
+      ),
+    },
     "/requests": {
       get: operation("List inference history", "requests:read", undefined, {
         parameters: [
@@ -738,3 +790,33 @@ export const controlOpenApiDocument = {
     },
   },
 } as const;
+
+/** Counts are decimal strings so large token totals survive JSON without rounding. */
+export interface GatewayUsageMetrics {
+  requestCount: number;
+  successCount: number;
+  errorCount: number;
+  pendingCount: number;
+  unknownUsageCount: number;
+  inputTokens: string;
+  cachedInputTokens: string;
+  outputTokens: string;
+  totalTokens: string;
+  reservedTokens: string;
+  averageLatencyMs: number | null;
+}
+export interface GatewayUsageReport {
+  from: string;
+  to: string;
+  interval: "hour" | "day";
+  summary: GatewayUsageMetrics;
+  series: Array<GatewayUsageMetrics & { bucket: string }>;
+  accounts: Array<
+    GatewayUsageMetrics & {
+      accountId: string | null;
+      provider: string | null;
+      accountLabel: string;
+    }
+  >;
+  accountCount: number;
+}

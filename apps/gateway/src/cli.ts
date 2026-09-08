@@ -129,7 +129,7 @@ program
     );
   });
 
-program
+const accountsCommand = program
   .command("accounts")
   .option("--control-url <url>")
   .option("--control-key-file <path>")
@@ -137,6 +137,78 @@ program
     process.stdout.write(
       `${JSON.stringify(await remoteClient(options).listAccounts(), null, 2)}\n`,
     );
+  });
+
+accountsCommand
+  .command("add-oauth-token")
+  .requiredOption("--name <label>")
+  .option("--transport <transport>", "direct or agent-sdk", "direct")
+  .option("--token-stdin", "Read the OAuth token from stdin")
+  .action(async (options, command) => {
+    if (!["direct", "agent-sdk"].includes(options.transport))
+      throw new Error("Invalid transport");
+    let token = "";
+    if (options.tokenStdin) {
+      for await (const chunk of process.stdin) {
+        token += chunk.toString();
+        if (token.length > 4096) throw new Error("Token is too long");
+      }
+    } else {
+      if (!process.stdin.isTTY)
+        throw new Error("Use --token-stdin for noninteractive input");
+      process.stderr.write("Claude OAuth token (hidden): ");
+      const wasRaw = process.stdin.isRaw;
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      try {
+        token = await new Promise<string>((resolve, reject) => {
+          let value = "";
+          const onData = (chunk: Buffer) => {
+            for (const character of chunk.toString()) {
+              if (character === "\u0003") {
+                cleanup();
+                reject(new Error("Cancelled"));
+                return;
+              }
+              if (character === "\r" || character === "\n") {
+                cleanup();
+                resolve(value);
+                return;
+              }
+              if (character === "\u007f" || character === "\b")
+                value = value.slice(0, -1);
+              else if (character >= " ") value += character;
+              if (value.length > 4096) {
+                cleanup();
+                reject(new Error("Token is too long"));
+                return;
+              }
+            }
+          };
+          const cleanup = () => process.stdin.off("data", onData);
+          process.stdin.on("data", onData);
+        });
+      } finally {
+        process.stdin.setRawMode(wasRaw);
+        process.stdin.pause();
+        process.stderr.write("\n");
+      }
+    }
+    try {
+      const result = await remoteClient(
+        command.optsWithGlobals(),
+      ).createOAuthToken({
+        provider: "anthropic",
+        token: token.trim(),
+        display_name: options.name,
+        transport: options.transport,
+      });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } finally {
+      // Clear the reference when the request ends, including on failure.
+      // eslint-disable-next-line no-useless-assignment
+      token = "";
+    }
   });
 
 program

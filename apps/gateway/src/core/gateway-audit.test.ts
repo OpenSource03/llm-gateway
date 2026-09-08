@@ -65,3 +65,9 @@ test("provider access verification is audited without its action URL", () => {
   assert.equal(pattern?.action, "llm-gateway.account.verify-access");
   assert.equal(pattern?.captureBody, false);
 });
+
+test("OAuth token creation is audited without ever capturing its body", () => {
+  const pattern = matchGatewayAuditPattern("POST", "/accounts/oauth-tokens");
+  assert.equal(pattern?.action, "llm-gateway.account.create-token");
+  assert.equal(pattern?.captureBody, false);
+});

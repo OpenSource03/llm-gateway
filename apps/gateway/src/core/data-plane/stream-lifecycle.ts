@@ -24,12 +24,45 @@ interface StreamLeaseDependencies {
 interface StreamLifecycleOptions {
   dependencies?: StreamLeaseDependencies;
   publicProtocol?: "anthropic" | "responses";
+  clientSignal?: AbortSignal;
+}
+
+export interface StreamDiagnostics {
+  termination: "eof" | "client_abort" | "guard_abort" | "read_error" | "cancel";
+  chunks: number;
+  bytes: number;
+  terminalReceived: boolean;
+}
+
+/** Fixed, gateway-owned labels only: never persist a provider error name/message. */
+export class GatewayStreamError extends Error {
+  constructor(
+    name:
+      | "UpstreamStreamError"
+      | "UpstreamStreamTruncated"
+      | "ClientStreamCancelled"
+      | "GatewayStreamDeadline"
+      | "GatewayStreamAborted"
+      | "UpstreamTransportError"
+      | "GatewayLeaseLostError",
+  ) {
+    super(
+      name === "GatewayLeaseLostError"
+        ? "Gateway distributed lease was lost"
+        : name,
+    );
+    this.name = name;
+  }
 }
 
 export const wrapStreamLifecycle = (
   response: Response,
   leaseOwner: LeaseGuard | LeaseHandle[],
-  onComplete: (error: unknown, usage: ObservedUsage) => Promise<void>,
+  onComplete: (
+    error: unknown,
+    usage: ObservedUsage,
+    diagnostics?: StreamDiagnostics,
+  ) => Promise<void>,
   options: StreamLifecycleOptions = {},
 ): Response => {
   const dependencies = options.dependencies ?? {
@@ -61,30 +94,59 @@ export const wrapStreamLifecycle = (
       : createAnthropicStreamObserver();
   let finalized = false;
   let lifecycleError: unknown;
+  let chunks = 0;
+  let bytes = 0;
   let downstreamController: ReadableStreamDefaultController<Uint8Array> | null =
     null;
-  const finalize = async (error?: unknown) => {
+  const finalize = async (
+    error?: unknown,
+    termination: StreamDiagnostics["termination"] = "eof",
+  ) => {
     if (finalized) return;
     finalized = true;
     guard.signal.removeEventListener("abort", abortUpstream);
     await Promise.allSettled([
       guard.finish(),
-      onComplete(error, observer.usage),
+      onComplete(error, observer.usage, {
+        termination,
+        chunks,
+        bytes,
+        terminalReceived: observer.terminalReceived,
+      }),
     ]);
   };
   const abortUpstream = () => {
     if (finalized) return;
+    const clientAbort = options.clientSignal?.aborted === true;
+    // A client may close the HTTP connection immediately after receiving the
+    // terminal frame. Hono aborts the request signal before stream.cancel runs.
+    // Preserve the completed response and its usage on this path too.
+    const terminalError = observer.finish();
     lifecycleError =
-      guard.signal.reason ?? new GatewayLeaseLostError("Lease guard aborted");
+      terminalError?.name === "UpstreamStreamError"
+        ? terminalError
+        : terminalError
+          ? new GatewayStreamError(
+              clientAbort
+                ? "ClientStreamCancelled"
+                : guard.signal.reason instanceof GatewayLeaseLostError
+                  ? "GatewayLeaseLostError"
+                  : guard.signal.reason instanceof DOMException &&
+                      guard.signal.reason.name === "TimeoutError"
+                    ? "GatewayStreamDeadline"
+                    : "GatewayStreamAborted",
+            )
+          : undefined;
     try {
-      downstreamController?.error(lifecycleError);
+      if (lifecycleError) downstreamController?.error(lifecycleError);
+      else downstreamController?.close();
     } catch {
       // The downstream may already be closed/cancelled; finalization remains
       // independent and idempotent.
     }
     // Finalization must not wait for a broken provider stream's cancel promise;
     // accounting and concurrency leases are released independently.
-    void finalize(lifecycleError);
+    void finalize(lifecycleError, clientAbort ? "client_abort" : "guard_abort");
     void reader.cancel(lifecycleError).catch(() => undefined);
   };
 
@@ -100,6 +162,7 @@ export const wrapStreamLifecycle = (
         if (lifecycleError) throw lifecycleError;
         const result = await reader.read();
 
+        if (finalized) return;
         if (lifecycleError) throw lifecycleError;
         if (result.done) {
           const terminalError = observer.finish();
@@ -109,25 +172,39 @@ export const wrapStreamLifecycle = (
         } else {
           observer.observe(result.value);
           controller.enqueue(result.value);
+          chunks += 1;
+          bytes += result.value.byteLength;
         }
-      } catch (error) {
-        await finalize(error);
-        controller.error(error);
+      } catch {
+        if (finalized) return;
+        const terminalError = observer.finish();
+        const failure =
+          terminalError?.name === "UpstreamStreamError"
+            ? terminalError
+            : terminalError
+              ? new GatewayStreamError("UpstreamTransportError")
+              : undefined;
+        await finalize(failure, "read_error");
+        if (failure) controller.error(failure);
+        else controller.close();
       }
     },
-    async cancel(reason) {
+    async cancel() {
       const observerError = observer.finish();
-      const cancellationError = observerError
-        ? observerError
-        : reason instanceof Error
-          ? reason
-          : new Error("Downstream stream cancelled", { cause: reason });
+      const cancellationError = new GatewayStreamError("ClientStreamCancelled");
 
       // Codex closes some upstream streams as soon as it receives the
       // protocol's terminal event, before reading transport EOF. That is a
       // completed response, not a truncation. A pre-terminal cancellation
       // still fails closed and retains conservative accounting.
-      await finalize(observerError ? cancellationError : undefined);
+      await finalize(
+        observerError?.name === "UpstreamStreamError"
+          ? observerError
+          : observerError
+            ? cancellationError
+            : undefined,
+        "cancel",
+      );
       void reader.cancel(cancellationError).catch(() => undefined);
     },
   });
@@ -231,6 +308,9 @@ const createAnthropicStreamObserver = () => {
 
   return {
     usage,
+    get terminalReceived() {
+      return terminal;
+    },
     observe(chunk: Uint8Array) {
       buffer += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
       drain();
@@ -239,8 +319,8 @@ const createAnthropicStreamObserver = () => {
       buffer += decoder.decode();
       drain();
 
-      if (failed) return new Error("UpstreamStreamError");
-      if (!terminal) return new Error("UpstreamStreamTruncated");
+      if (failed) return new GatewayStreamError("UpstreamStreamError");
+      if (!terminal) return new GatewayStreamError("UpstreamStreamTruncated");
 
       return undefined;
     },
@@ -313,6 +393,9 @@ const createResponsesStreamObserver = () => {
 
   return {
     usage,
+    get terminalReceived() {
+      return terminal;
+    },
     observe(chunk: Uint8Array) {
       buffer += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
       drain();
@@ -321,8 +404,8 @@ const createResponsesStreamObserver = () => {
       buffer += decoder.decode();
       drain();
 
-      if (failed) return new Error("UpstreamStreamError");
-      if (!terminal) return new Error("UpstreamStreamTruncated");
+      if (failed) return new GatewayStreamError("UpstreamStreamError");
+      if (!terminal) return new GatewayStreamError("UpstreamStreamTruncated");
 
       return undefined;
     },

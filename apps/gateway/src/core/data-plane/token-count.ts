@@ -118,7 +118,11 @@ export const countGatewayTokens = async (input: {
         }
         let credential = await loadCredential(routed.accountId);
 
-        if (credential.secret.expiresAt <= Date.now() + 5 * 60 * 1000) {
+        if (
+          credential.secret.expiresAt !== null &&
+          credential.secret.expiresAt !== null &&
+          credential.secret.expiresAt <= Date.now() + 5 * 60 * 1000
+        ) {
           refreshedAccounts.add(routed.accountId);
           await refreshGatewayAccount(routed.accountId, {
             refreshCredential: true,

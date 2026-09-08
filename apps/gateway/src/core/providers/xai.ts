@@ -265,6 +265,11 @@ export function createXaiProviderAdapter(
     },
 
     async refresh(secret, signal) {
+      if (secret.kind === "access-token")
+        throw new ProviderProtocolError(
+          "Access tokens cannot be refreshed",
+          401,
+        );
       const discovery = await fetchDiscovery(deps, signal);
       const response = await fetchWithTimeout(
         deps.fetch,

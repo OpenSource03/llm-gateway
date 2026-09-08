@@ -156,6 +156,11 @@ export function createAnthropicProviderAdapter(
     },
 
     async refresh(secret, signal) {
+      if (secret.kind === "access-token")
+        throw new ProviderProtocolError(
+          "Access tokens cannot be refreshed",
+          401,
+        );
       const payload = await tokenRequest(
         deps,
         {
@@ -207,6 +212,33 @@ export function createAnthropicProviderAdapter(
       );
 
       return parseAnthropicQuota(payload, deps.now());
+    },
+
+    async prepareQuotaProbe(input) {
+      const prepared = await this.prepareInference(input);
+      // The non-beta route preserves quota headers on scoped exhaustion.
+      prepared.url = "https://api.anthropic.com/v1/messages";
+      // Measured Claude Code 2.1.260 token-only quota profile. Inference beta
+      // combinations can reject newer scoped models before returning quota.
+      prepared.init.headers = {
+        Authorization: `Bearer ${input.secret.accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.260 (external, cli)",
+      };
+      prepared.init.body = JSON.stringify({
+        model: input.upstreamModel,
+        max_tokens: 1,
+        system: [
+          {
+            type: "text",
+            text: "You are Claude Code, Anthropic's official CLI for Claude.",
+          },
+        ],
+        messages: [{ role: "user", content: "quota" }],
+      });
+      return prepared;
     },
 
     async prepareInference(input) {
@@ -769,19 +801,32 @@ export function parseAnthropicQuotaHeaders(
   for (const [suffix, label] of [
     ["5h", "5 hours"],
     ["7d", "7 days"],
+    ["7d_oi", "Scoped weekly usage"],
   ] as const) {
     const utilization = finiteNumber(
       headers.get(`anthropic-ratelimit-unified-${suffix}-utilization`),
     );
 
-    if (utilization === undefined) continue;
-    const used = clampFraction(utilization);
+    const rejected =
+      headers.get(`anthropic-ratelimit-unified-${suffix}-status`) ===
+      "rejected";
+    if (utilization === undefined && !rejected) continue;
+    const used = clampFraction(utilization ?? 1);
     const resetSeconds = finiteNumber(
       headers.get(`anthropic-ratelimit-unified-${suffix}-reset`),
     );
 
     windows.push({
-      id: suffix === "5h" ? "five_hour" : "seven_day",
+      id:
+        suffix === "5h"
+          ? "five_hour"
+          : suffix === "7d"
+            ? "seven_day"
+            : "seven_day_overage_included",
+      ...(suffix === "7d_oi"
+        ? { scope: "requested-model", meterKey: "seven_day_overage_included" }
+        : {}),
+      allowed: !rejected,
       label,
       usedFraction: used,
       remainingFraction: 1 - used,
@@ -797,6 +842,7 @@ export function parseAnthropicQuotaHeaders(
     windows,
     metadata: {
       source: "headers",
+      organizationId: headers.get("anthropic-organization-id"),
       representativeClaim: headers.get(
         "anthropic-ratelimit-unified-representative-claim",
       ),

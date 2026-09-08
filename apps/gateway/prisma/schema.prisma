@@ -63,6 +63,9 @@ enum GatewayLeaseKind {
 model GatewayProviderAccount {
   id                        String               @id @default(uuid())
   provider                  String
+  authenticationMethod      String               @default("oauth")
+  /// Unknown until a real inference succeeds. Never inferred from model discovery.
+  inferenceReadyAt          DateTime?
   identityKey               String
   externalAccountId         String
   externalWorkspaceId       String?
@@ -93,6 +96,7 @@ model GatewayProviderAccount {
   updatedAt                 DateTime             @updatedAt
 
   credential      GatewayProviderCredential?
+  tokenProbes     GatewayTokenProbe[]
   accountModels   GatewayAccountModel[]
   poolMemberships GatewayRoutingPoolMember[]
   sessionRoutes   GatewaySessionRoute[]
@@ -102,6 +106,24 @@ model GatewayProviderAccount {
   @@index([provider, enabled, status])
   @@index([provider, transportMode, enabled, status])
   @@index([cooldownUntil])
+}
+
+/// Durable probe budgets survive failures and restarts; contains structural metrics only.
+model GatewayTokenProbe {
+  accountId    String
+  kind         String
+  attemptCount Int @default(0)
+  inputTokensTotal BigInt @default(0)
+  outputTokensTotal BigInt @default(0)
+  unknownUsageCount Int @default(0)
+  attemptedAt  DateTime
+  modelId      String
+  statusCode   Int?
+  inputTokens  BigInt?
+  outputTokens BigInt?
+  account      GatewayProviderAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@id([accountId, kind])
 }
 
 /// Envelope-encrypted OAuth token bundle. The plaintext is a versioned JSON

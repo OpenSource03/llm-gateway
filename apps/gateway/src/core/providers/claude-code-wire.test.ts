@@ -96,7 +96,7 @@ test("Claude Code wire rewrite signs the body and namespaces tools reversibly", 
   assert.notEqual(extractCch(rewritten.body), "00000");
   assert.match(
     body.system[0].text,
-    /cc_version=2\.1\.247\.f3e; cc_entrypoint=cli; cch=[0-9a-f]{5}; cc_prompt_id=[0-9a-f-]{36};/,
+    /cc_version=2\.1\.260\.f3e; cc_entrypoint=cli; cch=[0-9a-f]{5}; cc_prompt_id=[0-9a-f-]{36};/,
   );
   assert.doesNotMatch(
     body.system[0].text,
@@ -127,7 +127,7 @@ test("Claude Code wire rewrite signs the body and namespaces tools reversibly", 
   assert.equal(rewritten.headers.get("accept"), "application/json");
   assert.equal(
     rewritten.headers.get("user-agent"),
-    "claude-cli/2.1.247 (external, cli)",
+    "claude-cli/2.1.260 (external, cli)",
   );
   assert.equal(rewritten.headers.get("x-stainless-package-version"), "0.112.1");
   assert.equal(rewritten.headers.get("x-stainless-runtime-version"), "v26.3.0");

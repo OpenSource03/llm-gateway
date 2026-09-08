@@ -1,3 +1,7 @@
+import { getAnthropicAgentSdkTransport } from "../core/providers/anthropic-agent-sdk";
+import type { CreateOAuthTokenInput } from "@opensource03/llm-gateway-contracts";
+import { sha256Hex } from "../core/security/secrets";
+import { refreshTokenAccountQuota } from "./token-quota.service";
 import type { ActorReference } from "../middleware/control-principal";
 import type { Prisma } from "../generated/prisma/client";
 import type {
@@ -87,6 +91,8 @@ export interface OAuthAttemptRow {
 }
 
 export interface GatewayProviderAccountRow {
+  authenticationMethod: "oauth" | "oauth-token";
+  inferenceReady: boolean;
   id: string;
   provider: DbProvider;
   email: string | null;
@@ -164,6 +170,12 @@ const toAccountRow = (account: AccountRecord): GatewayProviderAccountRow => {
   }
 
   return {
+    authenticationMethod: account.authenticationMethod as
+      "oauth" | "oauth-token",
+    inferenceReady:
+      account.authenticationMethod !== "oauth-token" ||
+      (account.inferenceReadyAt !== null &&
+        account.status !== "REAUTH_REQUIRED"),
     id: account.id,
     provider: account.provider,
     email: account.email,
@@ -212,6 +224,146 @@ export const listGatewayAccounts = async (): Promise<
   });
 
   return accounts.map((account) => toAccountRow(account as AccountRecord));
+};
+
+const tokenAccountFailure = (error: unknown) =>
+  error instanceof ProviderProtocolError &&
+  (error.status === 401 || error.status === 403)
+    ? {
+        status: "REAUTH_REQUIRED" as const,
+        healthReason: "OAuth token rejected; create a new account",
+      }
+    : classifyAccountRefreshFailures([error]);
+
+export const createGatewayTokenAccount = async (
+  actor: ActorReference,
+  input: CreateOAuthTokenInput,
+  signal?: AbortSignal,
+): Promise<GatewayProviderAccountRow> => {
+  if (input.provider !== "anthropic")
+    throw new GatewayError(
+      "Token provider unsupported",
+      400,
+      "PROVIDER_MISMATCH",
+    );
+  if (
+    input.transport === "agent-sdk" &&
+    (!getEnv().GATEWAY_ANTHROPIC_AGENT_SDK_URL ||
+      !getEnv().GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY)
+  ) {
+    throw new GatewayError(
+      "Agent SDK transport is not configured",
+      503,
+      "TRANSPORT_UNAVAILABLE",
+    );
+  }
+  const key = `token:${sha256Hex(input.token)}`;
+  if (
+    await llmGatewayPrisma.gatewayProviderAccount.findUnique({
+      where: {
+        provider_identityKey: {
+          provider: toDbProvider(input.provider),
+          identityKey: key,
+        },
+      },
+    })
+  ) {
+    throw new GatewayError(
+      "This token already has an account",
+      409,
+      "TOKEN_ALREADY_EXISTS",
+    );
+  }
+  const id = randomUUID();
+  if (input.transport === "agent-sdk") {
+    try {
+      await getAnthropicAgentSdkTransport().tokenQuota(
+        { id: "agent-sdk", profileId: `gw-token-${id}`, tokenBacked: true },
+        "",
+        signal,
+      );
+    } catch {
+      throw new GatewayError(
+        "Token-capable Agent SDK transport is unavailable",
+        503,
+        "TRANSPORT_UNAVAILABLE",
+      );
+    }
+  }
+  const secret: OAuthSecret = {
+    kind: "access-token",
+    accessToken: input.token,
+    expiresAt: null,
+  };
+  // Namespaced local identity, never a claim about a provider subject.
+  const identity: ProviderIdentity = {
+    externalAccountId: `gateway-token:${id}`,
+    displayName: input.display_name,
+  };
+  await getProviderAdapter(input.provider).discover(secret, signal);
+  signal?.throwIfAborted();
+  const encrypted = await encryptEnvelope(
+    { secret, identity } satisfies StoredCredentialPayload,
+    `credential:${id}`,
+    getGatewayKeyWrapper(),
+  );
+  try {
+    await llmGatewayPrisma.gatewayProviderAccount.create({
+      data: {
+        id,
+        provider: toDbProvider(input.provider),
+        identityKey: key,
+        authenticationMethod: "oauth-token",
+        externalAccountId: identity.externalAccountId,
+        displayName: input.display_name,
+        transportMode: input.transport,
+        transportProfileId:
+          input.transport === "agent-sdk" ? `gw-token-${id}` : null,
+        lastAuthenticatedAt: new Date(),
+        createdByActorId: actor.id,
+        credential: {
+          create: {
+            ciphertext: Buffer.from(encrypted.ciphertext),
+            nonce: Buffer.from(encrypted.nonce),
+            authTag: Buffer.from(encrypted.authTag),
+            wrappedDataKey: Buffer.from(encrypted.wrappedDataKey),
+            keyWrapperId: encrypted.keyWrapperId,
+            encryptionAlgorithm: encrypted.encryptionAlgorithm,
+            envelopeVersion: encrypted.envelopeVersion,
+          },
+        },
+      },
+    });
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    )
+      throw new GatewayError(
+        "This token already has an account",
+        409,
+        "TOKEN_ALREADY_EXISTS",
+      );
+    throw error;
+  }
+  try {
+    await discoverAccountModels(id, input.provider, secret, signal);
+    // A bounded inference validates readiness independently of catalog access.
+    await refreshTokenAccountQuota(id, signal, true);
+  } catch (error) {
+    await llmGatewayPrisma.gatewayProviderAccount.updateMany({
+      where: { id, status: { not: "REAUTH_REQUIRED" } },
+      data: tokenAccountFailure(error),
+    });
+  }
+  return toAccountRow(
+    await llmGatewayPrisma.gatewayProviderAccount.findUniqueOrThrow({
+      where: { id },
+      include: accountInclude,
+    }),
+  );
 };
 
 const externalTransportAdapter = (
@@ -277,7 +429,7 @@ export const linkGatewayExternalProfile = async (
   if (accountId) {
     const existing = await llmGatewayPrisma.gatewayProviderAccount.findUnique({
       where: { id: accountId },
-      select: { provider: true },
+      select: { provider: true, authenticationMethod: true },
     });
 
     if (!existing)
@@ -405,10 +557,16 @@ export const startOAuthAttempt = async (
   if (targetAccountId) {
     const target = await llmGatewayPrisma.gatewayProviderAccount.findUnique({
       where: { id: targetAccountId },
-      select: { provider: true },
+      select: { provider: true, authenticationMethod: true },
     });
 
     if (!target) throw new GatewayError("Account not found", 404, "NOT_FOUND");
+    if (target.authenticationMethod === "oauth-token")
+      throw new GatewayError(
+        "Token accounts require a new account when credentials expire",
+        409,
+        "TOKEN_ACCOUNT_CREATE_ONLY",
+      );
     if (target.provider !== toDbProvider(provider)) {
       throw new GatewayError(
         "Reauthorization provider does not match the account",
@@ -607,7 +765,7 @@ export const saveQuotaSnapshot = async (
   );
 };
 
-const discoverAccountModels = async (
+export const discoverAccountModels = async (
   accountId: string,
   provider: ProviderId,
   secret: OAuthSecret | null,
@@ -852,7 +1010,10 @@ const finishLogin = async (
         keyWrapperId: encrypted.keyWrapperId,
         encryptionAlgorithm: encrypted.encryptionAlgorithm,
         envelopeVersion: encrypted.envelopeVersion,
-        accessTokenExpiresAt: new Date(progress.secret.expiresAt),
+        accessTokenExpiresAt:
+          progress.secret.expiresAt === null
+            ? null
+            : new Date(progress.secret.expiresAt),
       },
       update: {
         ciphertext: Buffer.from(encrypted.ciphertext),
@@ -862,7 +1023,10 @@ const finishLogin = async (
         keyWrapperId: encrypted.keyWrapperId,
         encryptionAlgorithm: encrypted.encryptionAlgorithm,
         envelopeVersion: encrypted.envelopeVersion,
-        accessTokenExpiresAt: new Date(progress.secret.expiresAt),
+        accessTokenExpiresAt:
+          progress.secret.expiresAt === null
+            ? null
+            : new Date(progress.secret.expiresAt),
         revision: { increment: 1 },
       },
     }),
@@ -1100,6 +1264,17 @@ export const updateGatewayAccount = async (
   });
 
   if (!existing) throw new GatewayError("Account not found", 404, "NOT_FOUND");
+  if (
+    existing.authenticationMethod === "oauth-token" &&
+    (input.transportMode !== undefined ||
+      input.transportProfileId !== undefined)
+  ) {
+    throw new GatewayError(
+      "Token account transport is chosen at creation",
+      409,
+      "TOKEN_ACCOUNT_CREATE_ONLY",
+    );
+  }
   let transportProfileId = input.transportProfileId;
 
   if (
@@ -1284,7 +1459,11 @@ export const verifyGatewayAccountAccess = async (
     }
     let credential = await loadCredential(accountId);
 
-    if (credential.secret.expiresAt <= Date.now() + 5 * 60 * 1000) {
+    if (
+      credential.secret.expiresAt !== null &&
+      credential.secret.expiresAt !== null &&
+      credential.secret.expiresAt <= Date.now() + 5 * 60 * 1000
+    ) {
       await refreshGatewayAccount(accountId, {
         refreshCredential: true,
         signal: guard.signal,
@@ -1367,6 +1546,37 @@ export const refreshGatewayAccount = async (
     let quotaRefresh: Promise<QuotaSnapshot>;
     let modelRefresh: Promise<void>;
 
+    if (account.authenticationMethod === "oauth-token") {
+      if (account.status === "REAUTH_REQUIRED")
+        return toAccountRow(
+          await llmGatewayPrisma.gatewayProviderAccount.findUniqueOrThrow({
+            where: { id: account.id },
+            include: accountInclude,
+          }),
+        );
+      const loaded = await loadCredential(account.id);
+      try {
+        await discoverAccountModels(
+          account.id,
+          provider,
+          loaded.secret,
+          guard.signal,
+        );
+        await refreshTokenAccountQuota(account.id, guard.signal);
+      } catch (error) {
+        await llmGatewayPrisma.gatewayProviderAccount.updateMany({
+          where: { id: account.id, status: { not: "REAUTH_REQUIRED" } },
+          data: tokenAccountFailure(error),
+        });
+        throw error;
+      }
+      return toAccountRow(
+        await llmGatewayPrisma.gatewayProviderAccount.findUniqueOrThrow({
+          where: { id: account.id },
+          include: accountInclude,
+        }),
+      );
+    }
     if (account.transportMode === "agent-sdk") {
       if (
         !account.transportProfileId ||
@@ -1411,7 +1621,8 @@ export const refreshGatewayAccount = async (
 
       if (
         options.refreshCredential ||
-        secret.expiresAt <= Date.now() + 5 * 60 * 1000
+        (secret.expiresAt !== null &&
+          secret.expiresAt <= Date.now() + 5 * 60 * 1000)
       ) {
         let refreshed: Awaited<ReturnType<typeof adapter.refresh>>;
 
@@ -1443,7 +1654,8 @@ export const refreshGatewayAccount = async (
               keyWrapperId: encrypted.keyWrapperId,
               encryptionAlgorithm: encrypted.encryptionAlgorithm,
               envelopeVersion: encrypted.envelopeVersion,
-              accessTokenExpiresAt: new Date(secret.expiresAt),
+              accessTokenExpiresAt:
+                secret.expiresAt === null ? null : new Date(secret.expiresAt),
               revision: { increment: 1 },
               lastRefreshedAt: new Date(),
             },

@@ -1,4 +1,5 @@
 import { llmGatewayPrisma } from "../core/db";
+import { explainRequestHistory } from "./history-explanation";
 
 export interface GatewayRequestHistoryFilters {
   page: number;
@@ -48,6 +49,7 @@ export const listGatewayRequestHistory = async (
       cachedInputTokens: row.cachedInputTokens?.toString() ?? null,
       startedAt: row.startedAt.toISOString(),
       completedAt: row.completedAt?.toISOString() ?? null,
+      ...explainRequestHistory(row.outcome, row.errorClass),
     })),
     total,
   };

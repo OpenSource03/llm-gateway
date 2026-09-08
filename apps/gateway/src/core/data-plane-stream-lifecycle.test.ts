@@ -4,6 +4,74 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { wrapStreamLifecycle } from "./data-plane.service";
+import { createLeaseGuard } from "./leases";
+
+for (const terminal of [true, false]) {
+  test(`request signal abort ${terminal ? "after" : "before"} terminal is classified and accounted correctly`, async () => {
+    const client = new AbortController();
+    const guard = createLeaseGuard({
+      signal: client.signal,
+      ttlMs: 120_000,
+      heartbeatIntervalMs: 30_000,
+      dependencies: { release: async () => undefined },
+    });
+    let calls = 0;
+    let result: unknown;
+    const upstream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            terminal
+              ? 'data: {"type":"response.completed","response":{"usage":{"input_tokens":42,"output_tokens":7,"input_tokens_details":{"cached_tokens":5}}}}\n\n'
+              : ": keepalive\n\n",
+          ),
+        );
+      },
+      cancel() {
+        return new Promise<void>(() => undefined);
+      },
+    });
+    const response = wrapStreamLifecycle(
+      new Response(upstream, {
+        headers: { "content-type": "text/event-stream" },
+      }),
+      guard,
+      async (error, usage, diagnostics) => {
+        calls++;
+        result = {
+          error: error instanceof Error ? error.name : error,
+          usage,
+          diagnostics,
+        };
+      },
+      { publicProtocol: "responses", clientSignal: client.signal },
+    );
+    const reader = response.body!.getReader();
+    await reader.read();
+    // Hono's connection-close reason is a string, explaining historical null errorClass.
+    client.abort("Client connection prematurely closed.");
+    if (terminal) assert.equal((await reader.read()).done, true);
+    else await assert.rejects(reader.read(), /ClientStreamCancelled/);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls, 1);
+    const recorded = result as {
+      error: unknown;
+      usage: unknown;
+      diagnostics: { termination: string; terminalReceived: boolean };
+    };
+    assert.equal(
+      recorded.error,
+      terminal ? undefined : "ClientStreamCancelled",
+    );
+    assert.deepEqual(
+      recorded.usage,
+      terminal ? { input: 37, cached: 5, output: 7 } : {},
+    );
+    assert.equal(recorded.diagnostics.termination, "client_abort");
+    assert.equal(recorded.diagnostics.terminalReceived, terminal);
+    assert.ok(!JSON.stringify(recorded).includes("prematurely"));
+  });
+}
 
 const lease: LeaseHandle = {
   leaseKey: "CLIENT_CONCURRENCY:test:0",
@@ -13,6 +81,69 @@ const lease: LeaseHandle = {
   ownerId: "owner",
   expiresAt: new Date(Date.now() + 120_000),
 };
+
+for (const [frame, expected] of [
+  [": keepalive\n\n", "UpstreamStreamTruncated"],
+  [
+    'data: {"type":"response.failed","response":{"error":{"message":"private-provider-detail"}}}\n\n',
+    "UpstreamStreamError",
+  ],
+] as const) {
+  test(`EOF records the safe ${expected} category`, async () => {
+    let recorded: unknown;
+    const response = wrapStreamLifecycle(
+      new Response(frame),
+      [lease],
+      async (error) => {
+        recorded = error;
+      },
+      {
+        publicProtocol: "responses",
+        dependencies: {
+          heartbeat: async () => true,
+          release: async () => undefined,
+          heartbeatIntervalMs: 30_000,
+        },
+      },
+    );
+    await response.text();
+    assert.ok(recorded instanceof Error);
+    assert.equal(recorded.name, expected);
+    assert.ok(!recorded.message.includes("private-provider-detail"));
+  });
+}
+
+test("transport diagnostics never retain provider-controlled error names or messages", async () => {
+  let recorded: unknown;
+  const response = wrapStreamLifecycle(
+    new Response(
+      new ReadableStream({
+        pull(controller) {
+          controller.error({
+            name: "private-provider-detail",
+            message: "private-provider-detail",
+          });
+        },
+      }),
+    ),
+    [lease],
+    async (error) => {
+      recorded = error;
+    },
+    {
+      publicProtocol: "responses",
+      dependencies: {
+        heartbeat: async () => true,
+        release: async () => undefined,
+        heartbeatIntervalMs: 30_000,
+      },
+    },
+  );
+  await assert.rejects(response.text(), /UpstreamTransportError/);
+  assert.ok(recorded instanceof Error);
+  assert.equal(recorded.name, "UpstreamTransportError");
+  assert.ok(!JSON.stringify(recorded).includes("private-provider-detail"));
+});
 
 const exerciseLeaseLoss = async (
   heartbeat: () => Promise<boolean>,

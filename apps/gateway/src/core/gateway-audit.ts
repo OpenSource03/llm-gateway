@@ -37,6 +37,13 @@ const p = (
 export const GATEWAY_AUDIT_ROUTE_PATTERNS: GatewayAuditRoutePattern[] = [
   p(
     ["POST"],
+    /^\/accounts\/oauth-tokens$/,
+    "llm-gateway.account.create-token",
+    "provider-account",
+    false,
+  ),
+  p(
+    ["POST"],
     /^\/oauth-attempts\/[^/]+\/poll$/,
     "llm-gateway.oauth.poll",
     "oauth-attempt",

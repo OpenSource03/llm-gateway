@@ -308,7 +308,11 @@ export const proxyCodexSearchRequest = async (input: {
         leaseGuard.throwIfFailed();
         let credential = await loadCredential(routed.accountId);
 
-        if (credential.secret.expiresAt <= Date.now() + 5 * 60 * 1000) {
+        if (
+          credential.secret.expiresAt !== null &&
+          credential.secret.expiresAt !== null &&
+          credential.secret.expiresAt <= Date.now() + 5 * 60 * 1000
+        ) {
           await refreshGatewayAccount(routed.accountId, {
             refreshCredential: true,
             signal: leaseGuard.signal,

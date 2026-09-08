@@ -410,3 +410,27 @@ test("Claude collaboration calls declare their message argument plaintext", asyn
 
   assert.deepEqual(items[0]?.encrypted_function_args, []);
 });
+
+test("Responses without thinking omit the thinking-clear edit rejected by Claude", () => {
+  const converted = codexToAnthropic(
+    {
+      model: "anthropic/claude-haiku-test",
+      instructions: "",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "OK" }],
+        },
+      ],
+      tool_choice: "auto",
+      parallel_tool_calls: false,
+      store: false,
+      stream: true,
+      include: [],
+    },
+    { model: "claude-haiku-test", maxOutputTokens: 16 },
+  );
+  assert.equal(converted.request.thinking, undefined);
+  assert.equal(converted.request.context_management, undefined);
+});
