@@ -8,6 +8,9 @@ param githubRepository string
 
 param githubEnvironment string = 'azure-production'
 
+@description('Exact GitHub-issued OIDC subject. Supply the immutable owner/repository ID form when enabled by GitHub.')
+param federatedSubject string = 'repo:${githubRepository}:environment:${githubEnvironment}'
+
 resource deploymentIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: identityName
   location: location
@@ -18,7 +21,7 @@ resource githubTrust 'Microsoft.ManagedIdentity/userAssignedIdentities/federated
   name: 'github-gateway-production'
   properties: {
     issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:${githubRepository}:environment:${githubEnvironment}'
+    subject: federatedSubject
     audiences: ['api://AzureADTokenExchange']
   }
 }
