@@ -21,7 +21,12 @@ param image string = 'ghcr.io/opensource03/llm-gateway:v0.1.0'
 param migratorImage string = 'ghcr.io/opensource03/llm-gateway-migrator:v0.1.0'
 
 @secure()
+@description('DML-only runtime connection string for the gateway database.')
 param databaseUrl string
+
+@secure()
+@description('Migration-owner connection string, supplied only to the migration job.')
+param migrationDatabaseUrl string
 
 @secure()
 param sessionHmacSecret string
@@ -291,7 +296,7 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
       replicaRetryLimit: 1
       manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
       secrets: [
-        { name: 'database-url', value: databaseUrl }
+        { name: 'database-url', value: migrationDatabaseUrl }
       ]
     }
     template: {

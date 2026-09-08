@@ -1,0 +1,219 @@
+name: Deploy Azure App Service
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Reviewed full 40-character commit SHA from this repository
+        required: true
+        type: string
+      deploy:
+        description: Run migrations and update existing gateway apps (false builds images only)
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: llm-gateway-azure-production
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: azure-production
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      GATEWAY_RESOURCE_GROUP: ${{ vars.GATEWAY_RESOURCE_GROUP }}
+      GATEWAY_ACR_NAME: ${{ vars.GATEWAY_ACR_NAME }}
+      GATEWAY_DATA_APP: ${{ vars.GATEWAY_DATA_APP }}
+      GATEWAY_CONTROL_APP: ${{ vars.GATEWAY_CONTROL_APP }}
+      GATEWAY_MIGRATION_JOB: ${{ vars.GATEWAY_MIGRATION_JOB }}
+      GATEWAY_MIGRATION_EXPECTED_HOST: ${{ vars.GATEWAY_MIGRATION_EXPECTED_HOST }}
+      GATEWAY_MIGRATION_EXPECTED_DATABASE: ${{ vars.GATEWAY_MIGRATION_EXPECTED_DATABASE }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate deployment selectors
+        env:
+          DEPLOY: ${{ inputs.deploy }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$AZURE_SUBSCRIPTION_ID" =~ ^[0-9a-fA-F-]{36}$ ]]
+          [[ "$GATEWAY_RESOURCE_GROUP" =~ ^rg-llm-gateway-[a-z0-9-]+$ ]]
+          [[ "$GATEWAY_ACR_NAME" =~ ^[a-z0-9]{5,50}$ ]]
+          if [[ "$DEPLOY" == true ]]; then
+            [[ "$GATEWAY_DATA_APP" =~ ^app-llm-gateway-data-[a-z0-9-]+$ ]]
+            [[ "$GATEWAY_CONTROL_APP" =~ ^app-llm-gateway-control-[a-z0-9-]+$ ]]
+            [[ "$GATEWAY_MIGRATION_JOB" =~ ^llm-gateway-migrate-[a-z0-9-]+$ ]]
+            [[ "$GATEWAY_MIGRATION_EXPECTED_HOST" =~ ^[a-z0-9-]+\.postgres\.database\.azure\.com$ ]]
+            [[ "$GATEWAY_MIGRATION_EXPECTED_DATABASE" =~ ^llm_gateway[a-z0-9_]*$ ]]
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Verify selected source
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Select dedicated registry and existing immutable tags
+        id: registry
+        run: |
+          set -euo pipefail
+          registry=$(az acr show --name "$GATEWAY_ACR_NAME" \
+            --resource-group "$GATEWAY_RESOURCE_GROUP" --query loginServer -o tsv)
+          [[ "$registry" =~ ^[a-z0-9.-]+\.azurecr\.io$ ]]
+          echo "server=$registry" >> "$GITHUB_OUTPUT"
+          az acr login --name "$GATEWAY_ACR_NAME" --output none
+          repositories=$(az acr repository list --name "$GATEWAY_ACR_NAME" -o json)
+          for target in runtime migrator; do
+            repository=llm-gateway
+            if [[ "$target" == migrator ]]; then repository=llm-gateway-migrator; fi
+            exists=false
+            if jq -e --arg repository "$repository" 'index($repository) != null' <<< "$repositories" >/dev/null; then
+              tags=$(az acr repository show-tags --name "$GATEWAY_ACR_NAME" --repository "$repository" -o json)
+              if jq -e --arg tag "$SOURCE_SHA" 'index($tag) != null' <<< "$tags" >/dev/null; then
+                exists=true
+              fi
+            fi
+            echo "${target}_exists=$exists" >> "$GITHUB_OUTPUT"
+          done
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Publish runtime
+        if: steps.registry.outputs.runtime_exists != 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.registry.outputs.server }}/llm-gateway:${{ inputs.source_sha }}
+          labels: org.opencontainers.image.revision=${{ inputs.source_sha }}
+
+      - name: Publish migrator
+        if: steps.registry.outputs.migrator_exists != 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: migrator
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.registry.outputs.server }}/llm-gateway-migrator:${{ inputs.source_sha }}
+          labels: org.opencontainers.image.revision=${{ inputs.source_sha }}
+
+      - name: Lock tags and resolve deployment digests
+        id: images
+        env:
+          REGISTRY: ${{ steps.registry.outputs.server }}
+        run: |
+          set -euo pipefail
+          for target in runtime migrator; do
+            repository=llm-gateway
+            if [[ "$target" == migrator ]]; then repository=llm-gateway-migrator; fi
+            az acr repository update --name "$GATEWAY_ACR_NAME" \
+              --image "$repository:$SOURCE_SHA" --write-enabled false --delete-enabled false -o none
+            digest=$(az acr repository show --name "$GATEWAY_ACR_NAME" \
+              --image "$repository:$SOURCE_SHA" --query digest -o tsv)
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "$target=$REGISTRY/$repository@$digest" >> "$GITHUB_OUTPUT"
+            printf '%s: %s/%s@%s\n\n' "$target" "$REGISTRY" "$repository" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Run pinned migration before changing runtime images
+        if: inputs.deploy
+        env:
+          MIGRATOR_IMAGE: ${{ steps.images.outputs.migrator }}
+        run: |
+          set -euo pipefail
+          umask 077
+          job_file=$(mktemp)
+          template_file=$(mktemp --suffix=.yaml)
+          trap 'rm -f "$job_file" "$template_file"' EXIT
+          az containerapp job show --name "$GATEWAY_MIGRATION_JOB" \
+            --resource-group "$GATEWAY_RESOURCE_GROUP" -o json > "$job_file"
+          jq -e --arg host "$GATEWAY_MIGRATION_EXPECTED_HOST" \
+            --arg database "$GATEWAY_MIGRATION_EXPECTED_DATABASE" '
+            .properties.configuration.triggerType == "Manual" and
+            (.properties.template.containers | length) == 1 and
+            ((.properties.template.initContainers // []) | length) == 0 and
+            ((.properties.template.containers[0].command // []) | length) == 0 and
+            ((.properties.template.containers[0].args // []) | length) == 0 and
+            (.properties.template.containers[0].env | map(.name) | length == (unique | length)) and
+            (.properties.template.containers[0].env | any(.name == "GATEWAY_DATABASE_URL" and .value == null and (.secretRef | type == "string") and (.secretRef | length > 0))) and
+            (.properties.template.containers[0].env | any(.name == "GATEWAY_MIGRATION_EXPECTED_HOST" and .value == $host and .secretRef == null)) and
+            (.properties.template.containers[0].env | any(.name == "GATEWAY_MIGRATION_EXPECTED_DATABASE" and .value == $database and .secretRef == null))
+          ' "$job_file" >/dev/null
+          running=$(az containerapp job execution list --name "$GATEWAY_MIGRATION_JOB" \
+            --resource-group "$GATEWAY_RESOURCE_GROUP" --query "[?properties.status=='Running'] | length(@)" -o tsv)
+          [[ "$running" == 0 ]]
+          jq --arg image "$MIGRATOR_IMAGE" \
+            '.properties.template | .containers[0].image = $image' "$job_file" > "$template_file"
+          execution=$(az containerapp job start --name "$GATEWAY_MIGRATION_JOB" \
+            --resource-group "$GATEWAY_RESOURCE_GROUP" --yaml "$template_file" --query name -o tsv)
+          [[ -n "$execution" ]]
+          status=Pending
+          for _ in $(seq 1 90); do
+            status=$(az containerapp job execution show --name "$GATEWAY_MIGRATION_JOB" \
+              --resource-group "$GATEWAY_RESOURCE_GROUP" --job-execution-name "$execution" \
+              --query properties.status -o tsv)
+            case "$status" in
+              Succeeded) break ;;
+              Failed|Stopped|Degraded) echo "Migration execution did not succeed: $status" >&2; exit 1 ;;
+            esac
+            sleep 10
+          done
+          [[ "$status" == Succeeded ]]
+          printf 'Migration execution: %s succeeded.\n\n' "$execution" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update only the two gateway runtime images
+        if: inputs.deploy
+        env:
+          RUNTIME_IMAGE: ${{ steps.images.outputs.runtime }}
+        run: |
+          set -euo pipefail
+          for app in "$GATEWAY_CONTROL_APP" "$GATEWAY_DATA_APP"; do
+            previous=$(az webapp config show --name "$app" --resource-group "$GATEWAY_RESOURCE_GROUP" \
+              --query linuxFxVersion -o tsv)
+            printf 'Previous image for %s: %s\n\n' "$app" "$previous" >> "$GITHUB_STEP_SUMMARY"
+            az webapp config set --name "$app" --resource-group "$GATEWAY_RESOURCE_GROUP" \
+              --linux-fx-version "DOCKER|$RUNTIME_IMAGE" -o none
+            configured=$(az webapp config show --name "$app" --resource-group "$GATEWAY_RESOURCE_GROUP" \
+              --query linuxFxVersion -o tsv)
+            [[ "$configured" == "DOCKER|$RUNTIME_IMAGE" ]]
+          done
+
+      - name: Require public data readiness
+        if: inputs.deploy
+        run: |
+          set -euo pipefail
+          hostname=$(az webapp show --name "$GATEWAY_DATA_APP" --resource-group "$GATEWAY_RESOURCE_GROUP" \
+            --query defaultHostName -o tsv)
+          [[ "$hostname" =~ ^[a-z0-9.-]+\.azurewebsites\.net$ ]]
+          status=000
+          for _ in $(seq 1 60); do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --connect-timeout 5 --max-time 15 "https://$hostname/health/ready") || status=000
+            if [[ "$status" == 200 ]]; then break; fi
+            sleep 10
+          done
+          [[ "$status" == 200 ]]
+          printf 'Data readiness returned HTTP 200. Verify private control readiness and inference from an authorized network before calling the release complete.\n' >> "$GITHUB_STEP_SUMMARY"
