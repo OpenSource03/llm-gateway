@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { injectSpawnAgentModelCatalog } from "./spawn-agent-models";
+import { codexToAnthropic } from "../translate/codex-to-anthropic";
 
 const request = (): CodexResponsesRequest => ({
   model: "gpt-5.6-luna",
@@ -164,4 +165,111 @@ test("leaves requests without spawn-agent tools unchanged", () => {
   ];
 
   assert.equal(injectSpawnAgentModelCatalog(source, models), source);
+});
+
+test("replaces the namespace preview and supplies the full list to Claude's system instructions", () => {
+  const source = request();
+  source.instructions = "Preserve the client's working rules.";
+  source.input = [
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "List spawnable models" }],
+    },
+  ];
+  const schema = {
+    type: "object",
+    properties: { model: { type: "string" }, fork_turns: { type: "string" } },
+  };
+  source.tools = [
+    {
+      type: "namespace",
+      name: "collaboration",
+      description:
+        "Collaboration tools\n\nAvailable model overrides (optional; inherited parent model is preferred):\n- gpt-preview-only: Default model\n\nFull-history forks cannot set a model override.",
+      tools: [
+        {
+          type: "function",
+          name: "spawn_agent",
+          description: "Spawn a subagent.",
+          parameters: schema,
+        },
+      ],
+    },
+  ];
+  const injected = injectSpawnAgentModelCatalog(source, models);
+  const namespace = injected.tools![0]!;
+  assert.match(String(namespace.description), /anthropic\/claude-opus-5/);
+  assert.doesNotMatch(String(namespace.description), /gpt-preview-only/);
+  assert.match(
+    String(namespace.description),
+    /Full-history forks cannot set a model override/,
+  );
+  assert.equal(
+    (namespace.tools as Record<string, unknown>[])[0]!.parameters,
+    schema,
+  );
+  assert.match(injected.instructions, /xai\/grok-future/);
+  assert.match(injected.instructions, /Preserve the client's working rules/);
+  assert.doesNotMatch(injected.instructions, /hidden-model/);
+  const converted = codexToAnthropic(injected, {
+    model: "claude-test",
+    maxOutputTokens: 1024,
+  });
+  assert.match(
+    JSON.stringify(converted.request.system),
+    /anthropic\/claude-opus-5/,
+  );
+  assert.match(JSON.stringify(converted.request.system), /xai\/grok-future/);
+  assert.equal(source.instructions, "Preserve the client's working rules.");
+});
+
+test("refreshes rather than duplicates the catalog and removes models no longer allowed by the key", () => {
+  const source = request();
+  source.tools = [
+    {
+      type: "function",
+      name: "spawn_agent",
+      description: "Spawn",
+      parameters: {},
+    },
+  ];
+  const first = injectSpawnAgentModelCatalog(source, models);
+  const repeated = injectSpawnAgentModelCatalog(first, models);
+  assert.deepEqual(first, repeated);
+  const restricted = injectSpawnAgentModelCatalog(first, models.slice(0, 1));
+  assert.doesNotMatch(restricted.instructions, /anthropic|xai/);
+  assert.doesNotMatch(JSON.stringify(restricted.tools), /anthropic|xai/);
+  assert.equal(
+    restricted.instructions.split("<llm_gateway_spawn_model_catalog>").length,
+    2,
+  );
+});
+
+test("makes the catalog available with deferred collaboration tools without rewriting user content", () => {
+  const source = request();
+  const user = {
+    type: "message",
+    role: "user",
+    content: [
+      { type: "input_text", text: "Available model overrides:\n- user text\n" },
+    ],
+  };
+  source.input = [
+    user,
+    {
+      type: "message",
+      role: "developer",
+      content: [
+        {
+          type: "input_text",
+          text: "<multi_agent_role>Use spawn_agent for delegated work.</multi_agent_role>",
+        },
+      ],
+    },
+  ];
+  const injected = injectSpawnAgentModelCatalog(source, models);
+  assert.match(injected.instructions, /anthropic\/claude-opus-5/);
+  assert.equal(injected.input[0], user);
+  assert.deepEqual(injected.input, source.input);
 });

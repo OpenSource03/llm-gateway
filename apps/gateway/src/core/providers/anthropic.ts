@@ -82,7 +82,7 @@ export function createAnthropicProviderAdapter(
     codexCatalog: {
       modelIdSource: "public",
       supportsSearchTool: true,
-      toolMode: "direct",
+      toolMode: "code_mode_only",
       webSearchToolType: null,
     },
 

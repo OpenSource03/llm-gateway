@@ -3,6 +3,7 @@ import type { CodexResponsesRequest } from "../wire/codex-responses";
 import { encodeSseFrame, parseSseStream } from "../wire/sse";
 
 import { normalizeObjectRootToolInputSchema } from "./object-root-tool-schema";
+import { isCollaborationMessageTool } from "./plaintext-collaboration";
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -222,6 +223,14 @@ const rewriteCustomItem = (
   customTools: ReadonlySet<string>,
 ): Record<string, unknown> => {
   if (item.type !== "function_call") return item;
+  if (
+    isCollaborationMessageTool(item.name, item.namespace) &&
+    !Object.hasOwn(item, "encrypted_function_args")
+  ) {
+    // Grok's function-call arguments are plaintext; Codex V2 otherwise treats
+    // unannotated collaboration messages as provider-encrypted task payloads.
+    return { ...item, encrypted_function_args: [] };
+  }
   const key = toolKey(item.name, item.namespace);
 
   if (!key || !customTools.has(key)) return item;

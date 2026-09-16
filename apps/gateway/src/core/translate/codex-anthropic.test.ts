@@ -360,6 +360,7 @@ test("Claude SSE maps text, tool calls, and usage to Codex Responses events", as
   )?.data.item as Record<string, unknown>;
 
   assert.equal(tool.type, "message");
+  assert.equal(tool.phase, "commentary");
   const functionCall = events
     .filter((event) => event.event === "response.output_item.done")
     .map((event) => event.data.item as Record<string, unknown>)

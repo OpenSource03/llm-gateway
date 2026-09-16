@@ -60,6 +60,18 @@ const outputItem = (
   const parsed = block.partialJson ? JSON.parse(block.partialJson) : {};
   const tool = identity ?? { kind: "function" as const, name: block.name };
 
+  if (tool.kind === "tool_search") {
+    if (!record(parsed)) throw new TypeError("Invalid tool search arguments");
+    return {
+      type: "tool_search_call",
+      id: block.id,
+      call_id: block.id,
+      execution: "client",
+      status: "completed",
+      arguments: parsed,
+    };
+  }
+
   if (tool.kind === "custom") {
     const input = record(parsed)?.input;
 
@@ -100,6 +112,30 @@ async function* translateFrames(
   let cachedTokens = 0;
   let stopReason: string | null = null;
   const blocks = new Map<number, ActiveBlock>();
+  // Stream text immediately, but do not finalize its phase until the provider
+  // tells us whether it is followed by a tool call or ends the assistant turn.
+  const pendingText = new Set<number>();
+  const finishText = (final: boolean) => {
+    const last = [...pendingText].at(-1);
+    const frames: Uint8Array[] = [];
+    for (const index of pendingText) {
+      const block = blocks.get(index);
+      if (!block || block.kind !== "text") continue;
+      const item = outputItem(block, undefined);
+      frames.push(
+        encodeSseEvent("response.output_item.done", {
+          type: "response.output_item.done",
+          output_index: index,
+          item: {
+            ...item,
+            phase: final && index === last ? "final_answer" : "commentary",
+          },
+        }),
+      );
+    }
+    pendingText.clear();
+    return frames;
+  };
   const ensureCreated = () => {
     if (created) return [];
     created = true;
@@ -163,6 +199,7 @@ async function* translateFrames(
             },
           });
         } else if (content?.type === "tool_use") {
+          for (const chunk of finishText(false)) yield chunk;
           blocks.set(index, {
             kind: "tool",
             id:
@@ -205,6 +242,10 @@ async function* translateFrames(
         const block = blocks.get(index);
 
         if (!block) continue;
+        if (block.kind === "text") {
+          pendingText.add(index);
+          continue;
+        }
         const item = outputItem(
           block,
           block.kind === "tool" ? toolIdentities.get(block.name) : undefined,
@@ -233,6 +274,7 @@ async function* translateFrames(
       }
       if (event.type === "message_stop") {
         for (const chunk of ensureCreated()) yield chunk;
+        for (const chunk of finishText(stopReason === "end_turn")) yield chunk;
         yield encodeSseEvent("response.completed", {
           type: "response.completed",
           response: {

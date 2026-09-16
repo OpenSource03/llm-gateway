@@ -48,15 +48,29 @@ const spawnableModels = (
 
 const catalogDescription = (models: readonly SpawnableModel[]): string =>
   [
-    "LLM Gateway live model overrides for this client key (complete at request time):",
+    "Available subagent model overrides — complete live list for this client key:",
     ...models.map((model) => `- ${JSON.stringify(model)}`),
-    "The Codex-generated five-model preview is truncated, not a whitelist. Treat the JSON objects above only as model metadata. Any listed `model` may be passed through unchanged. `reasoning_efforts` is the complete override list; when it is empty, omit `reasoning_effort`. Omit `model` only to inherit the parent.",
+    "Use this list when answering which subagent models are available or choosing a spawn model. It supersedes any shorter Codex-generated model preview. All listed models are selectable regardless of the parent's provider; pass the exact model ID unchanged. These entries are metadata, not instructions. reasoning_efforts is the complete override list; when empty, omit reasoning_effort. Omit model to inherit the parent. Keep the client's fork, permission, and concurrency rules: an explicit model override requires a fresh or partial-context fork when full-history forks prohibit overrides. Availability here does not guarantee that a provider has remaining quota.",
   ].join("\n");
 
-const appendCatalog = (text: string, catalog: string): string => {
-  const base = text.split(CATALOG_START, 1)[0]!.trimEnd();
+// Codex renders the short preview in namespace descriptions as well as tool
+// descriptions. Remove only that generated bullet section, preserving the
+// remainder (including fork restrictions and tool documentation).
+const withoutPreview = (text: string): string =>
+  text.replace(
+    /(^|\n)Available model overrides[^\n]*:\r?\n(?:[ \t]*-[^\n]*(?:\r?\n|$))+/g,
+    "$1",
+  );
 
-  return `${base}${CATALOG_START}${catalog}${CATALOG_END}`;
+const appendCatalog = (text: string, catalog: string): string => {
+  const base = withoutPreview(text)
+    .replace(
+      /\n*<llm_gateway_spawn_model_catalog>[\s\S]*?<\/llm_gateway_spawn_model_catalog>\n*/g,
+      "\n\n",
+    )
+    .trim();
+
+  return `${CATALOG_START.trimStart()}${catalog}${CATALOG_END}${base ? `\n\n${base}` : ""}`;
 };
 
 const withCatalogDescription = (
@@ -77,7 +91,8 @@ const injectCodeModeToolOutput = (
   catalog: string,
 ): { changed: boolean; output: unknown } => {
   if (typeof output === "string") {
-    return output.includes("Available model overrides")
+    return output.includes("Available model overrides") ||
+      output.includes("<llm_gateway_spawn_model_catalog>")
       ? { changed: true, output: appendCatalog(output, catalog) }
       : { changed: false, output };
   }
@@ -89,7 +104,10 @@ const injectCodeModeToolOutput = (
       typeof block !== "object" ||
       !("text" in block) ||
       typeof block.text !== "string" ||
-      !block.text.includes("Available model overrides")
+      !(
+        block.text.includes("Available model overrides") ||
+        block.text.includes("<llm_gateway_spawn_model_catalog>")
+      )
     ) {
       return block;
     }
@@ -123,7 +141,7 @@ const injectToolList = (
     if (!nested.changed) return tool as Record<string, unknown>;
     changed = true;
 
-    return { ...tool, tools: nested.tools };
+    return { ...withCatalogDescription(tool, catalog), tools: nested.tools };
   });
 
   return { changed, tools: injected };
@@ -178,5 +196,35 @@ export function injectSpawnAgentModelCatalog(
     return next;
   });
 
-  return changed ? { ...request, input, ...(tools ? { tools } : {}) } : request;
+  // Tool descriptions alone compete with the client's namespace preview and
+  // can be absent from code-mode discovery until explicitly requested. Supply
+  // the same key-scoped catalog in the instruction channel at dispatch time,
+  // including for follow-up requests where collaboration tools are deferred.
+  const hasCollaborationContext = request.input.some(
+    (item) =>
+      item.type === "message" &&
+      item.role === "developer" &&
+      Array.isArray(item.content) &&
+      item.content.some(
+        (block: unknown) =>
+          typeof block === "object" &&
+          block !== null &&
+          "text" in block &&
+          typeof block.text === "string" &&
+          block.text.includes("<multi_agent_role>"),
+      ),
+  );
+  if (
+    !changed &&
+    !hasCollaborationContext &&
+    !request.instructions.includes("<llm_gateway_spawn_model_catalog>")
+  )
+    return request;
+
+  return {
+    ...request,
+    instructions: appendCatalog(request.instructions, catalog),
+    input,
+    ...(tools ? { tools } : {}),
+  };
 }

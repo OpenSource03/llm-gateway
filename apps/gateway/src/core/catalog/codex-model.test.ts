@@ -39,7 +39,15 @@ test("builds a compact code-mode catalog row from adapter capabilities", () => {
     ["low", "medium", "high", "xhigh", "max", "ultra"],
   );
   assert.equal(Object.hasOwn(row, "web_search_tool_type"), false);
-  assert.equal(row.base_instructions, "");
+  assert.match(
+    String(row.base_instructions),
+    /Preserve your actual model and provider identity/,
+  );
+  assert.match(String(row.base_instructions), /ALL_TOOLS/);
+  assert.equal(
+    (row.model_messages as Record<string, unknown>).instructions_template,
+    row.base_instructions,
+  );
   assert.deepEqual(row.input_modalities, ["text", "image"]);
   assert.equal(row.multi_agent_version, "v2");
 });

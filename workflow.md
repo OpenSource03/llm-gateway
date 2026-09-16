@@ -56,6 +56,8 @@ provider-neutral capabilities.
   or outputs as if they were schemas.
 - Preserve the caller's harness instructions. Provider adapters translate
   protocol; they do not invent a Codex, Claude, or provider personality.
+  The Codex catalog may supply provider-neutral client workflow guidance for
+  synthetic models, while preserving their actual identity and tool contracts.
 - Sanitize every provider error. For diagnostics, emit only status, structured
   reason/domain, known-field indicators, and validated action origins—not raw
   messages or bodies.

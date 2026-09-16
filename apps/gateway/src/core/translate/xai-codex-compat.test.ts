@@ -1,6 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+test("Grok collaboration messages declare plaintext without overwriting encryption metadata", async () => {
+  for (const encrypted of [undefined, ["message"]]) {
+    const item = {
+      type: "function_call",
+      name: "spawn_agent",
+      namespace: "collaboration",
+      call_id: "child",
+      arguments: '{"message":"synthetic task"}',
+      ...(encrypted ? { encrypted_function_args: encrypted } : {}),
+    };
+    const event = { type: "response.output_item.done", item };
+    const stream = restoreXaiCodexCustomToolStream(
+      streamFromStrings([`data: ${JSON.stringify(event)}\n\n`]),
+      new Set(),
+    );
+    for await (const frame of parseSseStream(stream)) {
+      assert.deepEqual(
+        JSON.parse(frame.data).item.encrypted_function_args,
+        encrypted ?? [],
+      );
+    }
+  }
+});
+
 import { parseSseStream, streamFromStrings } from "../wire/sse";
 
 import {

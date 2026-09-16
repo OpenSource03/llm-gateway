@@ -1,4 +1,9 @@
 import { encodeSseEvent, encodeSseFrame, parseSseStream } from "../wire/sse";
+import { restorePlaintextCollaborationItem } from "./plaintext-collaboration";
+
+type PlaintextCollaborationTools = Parameters<
+  typeof restorePlaintextCollaborationItem
+>[1];
 
 const publicFailure = () => ({
   type: "response.failed",
@@ -16,6 +21,7 @@ const publicFailure = () => ({
 async function* sanitizeFrames(
   upstream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
+  plaintextTools: PlaintextCollaborationTools = new Map(),
 ): AsyncGenerator<Uint8Array> {
   for await (const frame of parseSseStream(upstream, signal)) {
     if (frame.data === "[DONE]") {
@@ -47,16 +53,47 @@ async function* sanitizeFrames(
 
       return;
     }
-    yield encodeSseFrame(frame);
+    if (plaintextTools.size === 0) {
+      yield encodeSseFrame(frame);
+      continue;
+    }
+    try {
+      if (
+        payload.item &&
+        typeof payload.item === "object" &&
+        !Array.isArray(payload.item)
+      ) {
+        payload.item = restorePlaintextCollaborationItem(
+          payload.item as Record<string, unknown>,
+          plaintextTools,
+        );
+      }
+      const response = payload.response as Record<string, unknown> | undefined;
+      if (response && Array.isArray(response.output)) {
+        response.output = response.output.map((item) =>
+          item && typeof item === "object" && !Array.isArray(item)
+            ? restorePlaintextCollaborationItem(
+                item as Record<string, unknown>,
+                plaintextTools,
+              )
+            : item,
+        );
+      }
+      yield encodeSseFrame({ ...frame, data: JSON.stringify(payload) });
+    } catch {
+      yield encodeSseEvent("response.failed", publicFailure());
+      return;
+    }
   }
 }
 
 /** Preserve native Responses events while redacting in-band provider errors. */
 export function sanitizeCodexResponsesStream(
   upstream: ReadableStream<Uint8Array>,
+  plaintextTools?: PlaintextCollaborationTools,
 ): ReadableStream<Uint8Array> {
   const cancellation = new AbortController();
-  const frames = sanitizeFrames(upstream, cancellation.signal);
+  const frames = sanitizeFrames(upstream, cancellation.signal, plaintextTools);
 
   return new ReadableStream({
     async pull(controller) {

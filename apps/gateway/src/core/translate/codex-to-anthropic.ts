@@ -11,7 +11,7 @@ import { claudeCodeMcpToolName } from "../claude-code-tool-name";
 import { normalizeObjectRootToolInputSchema } from "./object-root-tool-schema";
 
 export interface CodexToolIdentity {
-  kind: "function" | "custom";
+  kind: "function" | "custom" | "tool_search";
   name: string;
   namespace?: string;
 }
@@ -212,7 +212,11 @@ function collectCodexTools(request: CodexResponsesRequest): {
   ];
 
   for (const item of request.input) {
-    if (item.type === "additional_tools" && Array.isArray(item.tools)) {
+    if (
+      (item.type === "additional_tools" ||
+        item.type === "tool_search_output") &&
+      Array.isArray(item.tools)
+    ) {
       definitions.push(...(item.tools as Array<Record<string, unknown>>));
     }
   }
@@ -236,8 +240,16 @@ function collectCodexTools(request: CodexResponsesRequest): {
 
       return;
     }
-    if (kind !== "function" && kind !== "custom") return;
-    const name = requiredString(definition.name, "tool.name");
+    if (kind !== "function" && kind !== "custom" && kind !== "tool_search")
+      return;
+    if (kind === "tool_search" && definition.execution !== "client") {
+      throw new TypeError("Only client-executed tool search is supported");
+    }
+    const name =
+      kind === "tool_search"
+        ? "tool_search"
+        : requiredString(definition.name, "tool.name");
+    if (kind === "tool_search") namespace = "gateway_tool_search";
     const identity: CodexToolIdentity = {
       kind,
       name,
@@ -264,7 +276,8 @@ function collectCodexTools(request: CodexResponsesRequest): {
         ? definition.description
         : undefined;
     const inputSchema =
-      kind === "function" && asRecord(definition.parameters)
+      (kind === "function" || kind === "tool_search") &&
+      asRecord(definition.parameters)
         ? normalizeObjectRootToolInputSchema(
             definition.parameters as Record<string, unknown>,
           )
@@ -321,6 +334,36 @@ export function codexToAnthropic(
     const type = item.type;
 
     if (type === "additional_tools" || type === "reasoning") continue;
+    if (type === "tool_search_call") {
+      if (item.execution !== "client" || !asRecord(item.arguments)) {
+        throw new TypeError("Invalid client tool search call");
+      }
+      appendMessage(messages, "assistant", [
+        {
+          type: "tool_use",
+          id: requiredString(item.call_id, "tool_search_call.call_id"),
+          name: wireName("tool_search", "gateway_tool_search", "tool_search"),
+          input: item.arguments,
+        },
+      ]);
+      continue;
+    }
+    if (type === "tool_search_output") {
+      if (item.execution !== "client" || !Array.isArray(item.tools)) {
+        throw new TypeError("Invalid client tool search output");
+      }
+      appendMessage(messages, "user", [
+        {
+          type: "tool_result",
+          tool_use_id: requiredString(
+            item.call_id,
+            "tool_search_output.call_id",
+          ),
+          content: JSON.stringify({ tools: item.tools }),
+        },
+      ]);
+      continue;
+    }
     if (type === "message") {
       const role = requiredString(item.role, "message.role");
       const blocks = messageBlocks(item);

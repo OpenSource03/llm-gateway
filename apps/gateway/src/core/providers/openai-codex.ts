@@ -13,6 +13,7 @@ import type {
 import { anthropicToResponses } from "../translate/anthropic-to-responses";
 import { transformResponsesResponse } from "../translate/responses-to-anthropic";
 import { sanitizeCodexResponsesStream } from "../translate/sanitize-codex-responses";
+import { preparePlaintextCollaboration } from "../translate/plaintext-collaboration";
 
 import {
   DEFAULT_ADAPTER_DEPENDENCIES,
@@ -432,8 +433,9 @@ export function createOpenAICodexProviderAdapter(
 
     async prepareResponsesInference(input) {
       const sessionId = normalizeSessionId(input.sessionId, deps.randomUUID());
+      const collaboration = preparePlaintextCollaboration(input.request);
       const body = {
-        ...input.request,
+        ...collaboration.request,
         model: input.upstreamModel,
         // Subscription inference must never persist caller content upstream.
         store: false as const,
@@ -470,13 +472,19 @@ export function createOpenAICodexProviderAdapter(
               "OpenAI Codex returned an empty Responses stream",
             );
 
-          return new Response(sanitizeCodexResponsesStream(response.body), {
-            status: response.status,
-            headers: mergeHeadersForPublicResponse(
-              response,
-              "text/event-stream; charset=utf-8",
+          return new Response(
+            sanitizeCodexResponsesStream(
+              response.body,
+              collaboration.plaintextTools,
             ),
-          });
+            {
+              status: response.status,
+              headers: mergeHeadersForPublicResponse(
+                response,
+                "text/event-stream; charset=utf-8",
+              ),
+            },
+          );
         },
       };
     },

@@ -154,7 +154,7 @@ export function createAntigravityProviderAdapter(
     codexCatalog: {
       modelIdSource: "public",
       supportsSearchTool: false,
-      toolMode: "direct",
+      toolMode: "code_mode_only",
       webSearchToolType: null,
     },
 

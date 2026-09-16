@@ -111,7 +111,7 @@ export function createXaiProviderAdapter(
     codexCatalog: {
       modelIdSource: "public",
       supportsSearchTool: true,
-      toolMode: "direct",
+      toolMode: "code_mode_only",
       webSearchToolType: null,
     },
 

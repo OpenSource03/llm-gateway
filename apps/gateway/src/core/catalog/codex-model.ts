@@ -1,4 +1,5 @@
 import type { CodexCatalogCapabilities } from "../providers/types";
+import { GENERIC_HARNESS_INSTRUCTIONS } from "./harness-instructions";
 
 const CODEX_REASONING_EFFORTS = [
   "minimal",
@@ -70,7 +71,7 @@ export function publishNativeCodexModel(
   };
 }
 
-/** Build one provider-neutral Codex catalog row without authoring a base prompt. */
+/** Supply client workflow guidance without borrowing a provider identity. */
 export function buildSyntheticCodexModel(
   model: SyntheticCodexModelSource,
   priority: number,
@@ -141,9 +142,7 @@ export function buildSyntheticCodexModel(
     upgrade: null,
     model_messages: {
       persistent_instructions: null,
-      // The provider adapter owns upstream system behavior. The catalog must
-      // not impersonate Codex or invent a model personality.
-      instructions_template: "",
+      instructions_template: GENERIC_HARNESS_INSTRUCTIONS,
       instructions_variables: null,
       approvals: null,
       collaboration_modes: null,
@@ -154,7 +153,7 @@ export function buildSyntheticCodexModel(
       confirmation_policies: null,
       guardian_v2: null,
     },
-    base_instructions: "",
+    base_instructions: GENERIC_HARNESS_INSTRUCTIONS,
     include_skills_usage_instructions: true,
     include_plugin_usage_instructions: true,
     include_apps_usage_instructions: true,
