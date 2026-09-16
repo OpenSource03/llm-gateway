@@ -3,6 +3,15 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag whose assets should be rebuilt and attached
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
@@ -14,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -28,7 +39,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/opensource03/llm-gateway:${{ github.ref_name }}
+            ghcr.io/opensource03/llm-gateway:${{ env.RELEASE_TAG }}
             ghcr.io/opensource03/llm-gateway:latest
       - id: migrator
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -37,7 +48,7 @@ jobs:
           target: migrator
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/opensource03/llm-gateway-migrator:${{ github.ref_name }}
+          tags: ghcr.io/opensource03/llm-gateway-migrator:${{ env.RELEASE_TAG }}
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Sign images with GitHub OIDC
         run: |
@@ -46,7 +57,7 @@ jobs:
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ghcr.io/opensource03/llm-gateway@${{ steps.runtime.outputs.digest }}
-          artifact-name: llm-gateway-${{ github.ref_name }}.spdx.json
+          artifact-name: llm-gateway-${{ env.RELEASE_TAG }}.spdx.json
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 8.15.4
@@ -77,7 +88,7 @@ jobs:
             cp scripts/install-macos.sh scripts/uninstall-macos.sh \
               "$asset_dir/scripts/"
             tar -C "$asset_dir" -czf \
-              "/tmp/release-assets/codex-auth-bridge-${GITHUB_REF_NAME}-darwin-$arch.tar.gz" \
+              "/tmp/release-assets/codex-auth-bridge-${RELEASE_TAG}-darwin-$arch.tar.gz" \
               codex-auth-bridge README.md scripts
           done
           cd /tmp/release-assets
@@ -90,8 +101,10 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${GITHUB_REF_NAME}"
-          /tmp/release-assets/*.tgz
-          --generate-notes
-          --verify-tag
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" /tmp/release-assets/* --clobber
+          else
+            gh release create "$RELEASE_TAG" /tmp/release-assets/* --generate-notes --verify-tag
+          fi
