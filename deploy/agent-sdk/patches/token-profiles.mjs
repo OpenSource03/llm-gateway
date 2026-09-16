@@ -57,6 +57,11 @@ export function patchTokenProfiles(source) {
   source = source.replace(
     featureAnchor,
     featureAnchor +
+      // The bridge is gateway-owned: the client (Claude Code or the gateway's Codex
+      // translation) always supplies its own system prompt, so the SDK must not
+      // prepend the claude_code preset, whose environment block describes this
+      // container (Linux, /opt/meridian) rather than the client machine.
+      "\n        sdkFeatures.codeSystemPrompt = false;" +
       "\n        if (gatewayProfile) sdkFeatures.sharedMemory = false;",
   );
   return source;

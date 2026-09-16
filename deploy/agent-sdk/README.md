@@ -104,6 +104,12 @@ session is a secondary diagnostic, not the cause.
 Keep Meridian private. For separate hosts, use HTTPS and omit
 `GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE`.
 
+The same patch disables Meridian's built-in Claude Code system prompt for
+every request: the SDK would otherwise prepend an environment block naming
+this container (Linux, `/opt/meridian`) ahead of the client's real one, and
+models then act as if the client were on that machine. Clients always send
+their own system prompt through the gateway, so nothing is lost.
+
 Gateway-owned OAuth token accounts use the version-checked `token-profiles`
 patch. The gateway supplies the account token only over the authenticated
 private bridge request; the bridge injects it into that profile's isolated SDK

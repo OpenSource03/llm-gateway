@@ -3,6 +3,13 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.2
+
+- Bridge: never prepend the SDK's built-in Claude Code system prompt. Its
+  environment block described the bridge container (Linux, `/opt/meridian`)
+  and models treated it as the client machine; the client's own system prompt
+  is now the only one.
+
 ## 0.2.1
 
 - Upgrade Debian packages in every image stage so the runtime, migrator, and

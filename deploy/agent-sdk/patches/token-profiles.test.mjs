@@ -77,6 +77,11 @@ test("bridge patches authentication before quota routes and scopes SDK observati
   assert.ok(patched.includes("gatewayModel: requestedModel"));
   assert.ok(patched.includes("model: e.gatewayModel"));
   assert.ok(patched.includes("sdkFeatures.sharedMemory = false"));
+  assert.ok(patched.includes("sdkFeatures.codeSystemPrompt = false;"));
+  assert.ok(
+    patched.indexOf("sdkFeatures.codeSystemPrompt = false") <
+      patched.indexOf("if (gatewayProfile) sdkFeatures.sharedMemory = false"),
+  );
 });
 test("bridge patch rejects missing, duplicate, or already-patched anchors", () => {
   assert.throws(() => patchTokenProfiles(""), /Unsupported/);
