@@ -212,6 +212,18 @@ export interface ExternalTransportReference {
   tokenBacked?: boolean;
 }
 
+/** Prefix of gateway-owned Agent SDK profiles; the credential never leaves the gateway database. */
+export const GATEWAY_TOKEN_PROFILE_PREFIX = "gw-token-";
+
+export const gatewayTokenProfileId = (accountId: string): string =>
+  `${GATEWAY_TOKEN_PROFILE_PREFIX}${accountId}`;
+
+export const isGatewayTokenProfile = (
+  profileId: string | null | undefined,
+): profileId is string =>
+  typeof profileId === "string" &&
+  profileId.startsWith(GATEWAY_TOKEN_PROFILE_PREFIX);
+
 export interface ExternalTransportProfile {
   id: string;
   email?: string;

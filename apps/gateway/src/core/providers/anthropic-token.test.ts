@@ -149,6 +149,32 @@ test("SDK token credentials require a gateway-owned token profile", async () => 
     JSON.stringify(result.init.body).includes("synthetic-token-value"),
     false,
   );
+  // Browser-login credentials ride the same private header; the refresh
+  // token never leaves the gateway.
+  const browserLogin = await sdk.prepareInference({
+    ...input,
+    transport: {
+      ...input.transport,
+      profileId: `gw-token-${crypto.randomUUID()}`,
+    },
+    secret: {
+      kind: "oauth",
+      accessToken: "browser-login-token",
+      refreshToken: "browser-refresh-token",
+      expiresAt: Date.now() + 60_000,
+    },
+  });
+  assert.equal(
+    new Headers(browserLogin.init.headers).get("x-llmgw-oauth-token"),
+    "browser-login-token",
+  );
+  assert.equal(
+    JSON.stringify([
+      browserLogin.init.body,
+      [...new Headers(browserLogin.init.headers)],
+    ]).includes("browser-refresh-token"),
+    false,
+  );
 });
 
 test("quota probes use the measured minimal token profile for scoped models", async () => {

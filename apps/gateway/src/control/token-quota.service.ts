@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { llmGatewayPrisma } from "../core/db";
 import { getProviderAdapter, ProviderProtocolError } from "../core/providers";
 import { getAnthropicAgentSdkTransport } from "../core/providers/anthropic-agent-sdk";
+import { isGatewayTokenProfile } from "../core/providers/types";
 import { parseAnthropicQuotaHeaders } from "../core/providers/anthropic";
 import { persistGatewayHeaderQuota } from "../core/data-plane/routing";
 import { loadCredential } from "./accounts.service";
@@ -18,9 +19,9 @@ export async function collectTokenSdkQuota(
     where: { id: accountId },
   });
   if (
-    account?.authenticationMethod !== "oauth-token" ||
+    !account ||
     account.transportMode !== "agent-sdk" ||
-    !account.transportProfileId
+    !isGatewayTokenProfile(account.transportProfileId)
   )
     return;
   const model = await llmGatewayPrisma.gatewayModel.findUniqueOrThrow({
@@ -53,7 +54,11 @@ export async function refreshTokenAccountQuota(
       },
     });
   if (
-    account.authenticationMethod !== "oauth-token" ||
+    !(
+      account.authenticationMethod === "oauth-token" ||
+      (account.transportMode === "agent-sdk" &&
+        isGatewayTokenProfile(account.transportProfileId))
+    ) ||
     (!onboarding &&
       (!account.enabled ||
         !account.poolMemberships.length ||
@@ -79,8 +84,13 @@ export async function refreshTokenAccountQuota(
   )[0];
   const scoped = models.filter((m) => /fable/i.test(m.displayName));
   const loaded = await loadCredential(accountId);
-  if (loaded.secret.kind !== "access-token")
-    throw new ProviderProtocolError("Token account credential mismatch", 401);
+  // Browser-login credentials are rotated by refreshGatewayAccount; a probe
+  // with a stale token would only record a misleading rejection.
+  if (
+    loaded.secret.kind !== "access-token" &&
+    loaded.secret.expiresAt <= Date.now() + 60_000
+  )
+    return;
   const adapter = getProviderAdapter("anthropic");
   for (const kind of onboarding ? ["general"] : ["general", "scoped"]) {
     const interval = kind === "general" ? GENERAL_PROBE_MS : SCOPED_PROBE_MS;
@@ -259,7 +269,10 @@ export async function refreshTokenAccountQuota(
           where: { id: accountId },
           data: {
             status: "REAUTH_REQUIRED",
-            healthReason: "OAuth token rejected; create a new account",
+            healthReason:
+              account.authenticationMethod === "oauth-token"
+                ? "OAuth token rejected; create a new account"
+                : "Provider session rejected; sign in again",
           },
         });
         return;

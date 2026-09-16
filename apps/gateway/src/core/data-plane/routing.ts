@@ -23,6 +23,7 @@ import {
 } from "../leases";
 import type { QuotaSnapshot } from "../providers";
 import type { ProviderIdentity } from "../providers/types";
+import { isGatewayTokenProfile } from "../providers/types";
 import { fromDbProvider } from "../providers/provider-id";
 import { selectRoutingAccount } from "../routing/engine";
 import { hmacGatewaySession } from "../security/secrets";
@@ -591,7 +592,9 @@ export const routeAccount = async (input: {
         ? {
             id: "agent-sdk",
             profileId: selectedAccount.transportProfileId!,
-            tokenBacked: selectedAccount.authenticationMethod === "oauth-token",
+            tokenBacked: isGatewayTokenProfile(
+              selectedAccount.transportProfileId,
+            ),
           }
         : { id: "direct" },
   };

@@ -13,6 +13,7 @@ import type {
 } from "./types";
 
 import { getEnv } from "../../config/env";
+import { isGatewayTokenProfile } from "./types";
 import { anthropicSseToCodexResponses } from "../translate/anthropic-to-codex";
 import { codexToAnthropic } from "../translate/codex-to-anthropic";
 import { transformClaudeResponse } from "./claude-code-wire";
@@ -538,8 +539,8 @@ export class AnthropicAgentSdkTransport {
 
     if (input.transport.tokenBacked) {
       if (
-        input.secret?.kind !== "access-token" ||
-        !input.transport.profileId.startsWith("gw-token-")
+        !input.secret?.accessToken ||
+        !isGatewayTokenProfile(input.transport.profileId)
       )
         throw new ProviderProtocolError(
           "Token profile credential is unavailable",
@@ -593,8 +594,8 @@ export class AnthropicAgentSdkTransport {
 
     if (input.transport.tokenBacked) {
       if (
-        input.secret?.kind !== "access-token" ||
-        !input.transport.profileId.startsWith("gw-token-")
+        !input.secret?.accessToken ||
+        !isGatewayTokenProfile(input.transport.profileId)
       )
         throw new ProviderProtocolError(
           "Token profile credential is unavailable",

@@ -37,6 +37,23 @@ that different seats share quotas, so observations remain account scoped.
 
 ## Readiness and usage
 
+### Gateway-managed Agent SDK for browser-login accounts
+
+A browser-login (`oauth`) Claude account can run through the Agent SDK
+bridge without any login inside the bridge. Set the account's transport to
+`agent-sdk` with the profile `gw-token-<account id>` (Arcademy Admin offers
+this as **Agent SDK, gateway-managed**). The gateway keeps the encrypted
+credential, rotates it with the stored refresh token, and supplies only the
+current access token in each private bridge request, exactly as it does for
+token accounts. The bridge stores nothing.
+
+The profile must name the account's own ID; a stored credential and a
+reachable token-capable bridge are required at the time of the switch. The
+switch clears SDK readiness, which a successful SDK inference re-establishes.
+Readiness, probe budgets, and quota freshness then follow the token-account
+rules below. Browser reauthentication remains available, and the account can
+return to `direct` because its credential is retained.
+
 Creation validates the live token-scoped model catalog and makes one bounded
 direct quota request. Discovery is not proof of inference readiness. A direct
 account becomes ready after a successful probe; an SDK account becomes ready

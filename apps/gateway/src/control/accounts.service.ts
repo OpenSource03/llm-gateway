@@ -1,4 +1,8 @@
 import { getAnthropicAgentSdkTransport } from "../core/providers/anthropic-agent-sdk";
+import {
+  gatewayTokenProfileId,
+  isGatewayTokenProfile,
+} from "../core/providers/types";
 import type { CreateOAuthTokenInput } from "@opensource03/llm-gateway-contracts";
 import { sha256Hex } from "../core/security/secrets";
 import { refreshTokenAccountQuota } from "./token-quota.service";
@@ -173,7 +177,7 @@ const toAccountRow = (account: AccountRecord): GatewayProviderAccountRow => {
     authenticationMethod: account.authenticationMethod as
       "oauth" | "oauth-token",
     inferenceReady:
-      account.authenticationMethod !== "oauth-token" ||
+      !usesTokenProbeAccounting(account) ||
       (account.inferenceReadyAt !== null &&
         account.status !== "REAUTH_REQUIRED"),
     id: account.id,
@@ -226,12 +230,32 @@ export const listGatewayAccounts = async (): Promise<
   return accounts.map((account) => toAccountRow(account as AccountRecord));
 };
 
-const tokenAccountFailure = (error: unknown) =>
+/** Agent SDK accounts whose credential the gateway supplies per request. */
+const isGatewayManagedSdkAccount = (account: {
+  transportMode: string;
+  transportProfileId: string | null;
+}): boolean =>
+  account.transportMode === "agent-sdk" &&
+  isGatewayTokenProfile(account.transportProfileId);
+
+/** Readiness and quota come from bounded token probes, not provider profile endpoints. */
+const usesTokenProbeAccounting = (account: {
+  authenticationMethod: string;
+  transportMode: string;
+  transportProfileId: string | null;
+}): boolean =>
+  account.authenticationMethod === "oauth-token" ||
+  isGatewayManagedSdkAccount(account);
+
+const tokenAccountFailure = (error: unknown, authenticationMethod: string) =>
   error instanceof ProviderProtocolError &&
   (error.status === 401 || error.status === 403)
     ? {
         status: "REAUTH_REQUIRED" as const,
-        healthReason: "OAuth token rejected; create a new account",
+        healthReason:
+          authenticationMethod === "oauth-token"
+            ? "OAuth token rejected; create a new account"
+            : "Provider session rejected; sign in again",
       }
     : classifyAccountRefreshFailures([error]);
 
@@ -355,7 +379,7 @@ export const createGatewayTokenAccount = async (
   } catch (error) {
     await llmGatewayPrisma.gatewayProviderAccount.updateMany({
       where: { id, status: { not: "REAUTH_REQUIRED" } },
-      data: tokenAccountFailure(error),
+      data: tokenAccountFailure(error, "oauth-token"),
     });
   }
   return toAccountRow(
@@ -1276,6 +1300,7 @@ export const updateGatewayAccount = async (
     );
   }
   let transportProfileId = input.transportProfileId;
+  let adoptingGatewayProfile = false;
 
   if (
     input.transportMode !== undefined ||
@@ -1334,6 +1359,45 @@ export const updateGatewayAccount = async (
           "TRANSPORT_PROFILE_REQUIRED",
         );
       }
+      if (isGatewayTokenProfile(transportProfileId)) {
+        if (transportProfileId !== gatewayTokenProfileId(existing.id)) {
+          throw new GatewayError(
+            "A gateway-managed Agent SDK profile belongs to its own account",
+            400,
+            "TRANSPORT_PROFILE_INVALID",
+          );
+        }
+        if (
+          !(await llmGatewayPrisma.gatewayProviderCredential.findUnique({
+            where: { accountId: existing.id },
+            select: { id: true },
+          }))
+        ) {
+          throw new GatewayError(
+            "This account has no stored credential to supply to the bridge",
+            409,
+            "DIRECT_CREDENTIAL_REQUIRED",
+          );
+        }
+        try {
+          await getAnthropicAgentSdkTransport().tokenQuota(
+            {
+              id: "agent-sdk",
+              profileId: transportProfileId,
+              tokenBacked: true,
+            },
+            "",
+          );
+        } catch {
+          throw new GatewayError(
+            "Token-capable Agent SDK transport is unavailable",
+            503,
+            "TRANSPORT_UNAVAILABLE",
+          );
+        }
+        adoptingGatewayProfile =
+          existing.transportProfileId !== transportProfileId;
+      }
     }
   }
   const account = await llmGatewayPrisma.$transaction(
@@ -1368,6 +1432,8 @@ export const updateGatewayAccount = async (
             input.transportProfileId !== undefined) && {
             transportProfileId,
           }),
+          // SDK readiness is proven only by a successful SDK inference.
+          ...(adoptingGatewayProfile && { inferenceReadyAt: null }),
         },
         include: accountInclude,
       });
@@ -1545,8 +1611,58 @@ export const refreshGatewayAccount = async (
     };
     let quotaRefresh: Promise<QuotaSnapshot>;
     let modelRefresh: Promise<void>;
+    const rotateStoredCredential = async (
+      loaded: Awaited<ReturnType<typeof loadCredential>>,
+    ): Promise<Awaited<ReturnType<typeof loadCredential>>> => {
+      let refreshed: Awaited<ReturnType<typeof adapter.refresh>>;
 
-    if (account.authenticationMethod === "oauth-token") {
+      try {
+        refreshed = await adapter.refresh(loaded.secret, guard.signal);
+      } catch (error) {
+        await recordRefreshFailure([error]);
+        throw error;
+      }
+
+      guard.throwIfFailed();
+      const secret = refreshed.secret;
+      const identity = { ...loaded.identity, ...refreshed.identityPatch };
+      const encrypted = await encryptEnvelope(
+        { secret, identity } satisfies StoredCredentialPayload,
+        `credential:${account.id}`,
+        getGatewayKeyWrapper(),
+      );
+
+      guard.throwIfFailed();
+      const updated =
+        await llmGatewayPrisma.gatewayProviderCredential.updateMany({
+          where: { accountId: account.id, revision: loaded.revision },
+          data: {
+            ciphertext: Buffer.from(encrypted.ciphertext),
+            nonce: Buffer.from(encrypted.nonce),
+            authTag: Buffer.from(encrypted.authTag),
+            wrappedDataKey: Buffer.from(encrypted.wrappedDataKey),
+            keyWrapperId: encrypted.keyWrapperId,
+            encryptionAlgorithm: encrypted.encryptionAlgorithm,
+            envelopeVersion: encrypted.envelopeVersion,
+            accessTokenExpiresAt:
+              secret.expiresAt === null ? null : new Date(secret.expiresAt),
+            revision: { increment: 1 },
+            lastRefreshedAt: new Date(),
+          },
+        });
+
+      if (updated.count !== 1) {
+        throw new GatewayError(
+          "Credential changed during refresh",
+          409,
+          "STALE_CREDENTIAL",
+        );
+      }
+
+      return { secret, identity, revision: loaded.revision + 1 };
+    };
+
+    if (usesTokenProbeAccounting(account)) {
       if (account.status === "REAUTH_REQUIRED")
         return toAccountRow(
           await llmGatewayPrisma.gatewayProviderAccount.findUniqueOrThrow({
@@ -1554,7 +1670,17 @@ export const refreshGatewayAccount = async (
             include: accountInclude,
           }),
         );
-      const loaded = await loadCredential(account.id);
+      let loaded = await loadCredential(account.id);
+
+      // Browser-login credentials rotate here; the bridge only ever sees the
+      // current access token in a private request.
+      if (
+        loaded.secret.kind !== "access-token" &&
+        (options.refreshCredential ||
+          loaded.secret.expiresAt <= Date.now() + 5 * 60 * 1000)
+      ) {
+        loaded = await rotateStoredCredential(loaded);
+      }
       try {
         await discoverAccountModels(
           account.id,
@@ -1566,7 +1692,7 @@ export const refreshGatewayAccount = async (
       } catch (error) {
         await llmGatewayPrisma.gatewayProviderAccount.updateMany({
           where: { id: account.id, status: { not: "REAUTH_REQUIRED" } },
-          data: tokenAccountFailure(error),
+          data: tokenAccountFailure(error, account.authenticationMethod),
         });
         throw error;
       }
@@ -1632,50 +1758,10 @@ export const refreshGatewayAccount = async (
         (secret.expiresAt !== null &&
           secret.expiresAt <= Date.now() + 5 * 60 * 1000)
       ) {
-        let refreshed: Awaited<ReturnType<typeof adapter.refresh>>;
+        const rotated = await rotateStoredCredential(loaded);
 
-        try {
-          refreshed = await adapter.refresh(secret, guard.signal);
-        } catch (error) {
-          await recordRefreshFailure([error]);
-          throw error;
-        }
-
-        guard.throwIfFailed();
-        secret = refreshed.secret;
-        identity = { ...identity, ...refreshed.identityPatch };
-        const encrypted = await encryptEnvelope(
-          { secret, identity } satisfies StoredCredentialPayload,
-          `credential:${account.id}`,
-          getGatewayKeyWrapper(),
-        );
-
-        guard.throwIfFailed();
-        const updated =
-          await llmGatewayPrisma.gatewayProviderCredential.updateMany({
-            where: { accountId: account.id, revision: loaded.revision },
-            data: {
-              ciphertext: Buffer.from(encrypted.ciphertext),
-              nonce: Buffer.from(encrypted.nonce),
-              authTag: Buffer.from(encrypted.authTag),
-              wrappedDataKey: Buffer.from(encrypted.wrappedDataKey),
-              keyWrapperId: encrypted.keyWrapperId,
-              encryptionAlgorithm: encrypted.encryptionAlgorithm,
-              envelopeVersion: encrypted.envelopeVersion,
-              accessTokenExpiresAt:
-                secret.expiresAt === null ? null : new Date(secret.expiresAt),
-              revision: { increment: 1 },
-              lastRefreshedAt: new Date(),
-            },
-          });
-
-        if (updated.count !== 1) {
-          throw new GatewayError(
-            "Credential changed during refresh",
-            409,
-            "STALE_CREDENTIAL",
-          );
-        }
+        secret = rotated.secret;
+        identity = rotated.identity;
       }
 
       quotaRefresh = adapter.fetchQuota(secret, identity, guard.signal);

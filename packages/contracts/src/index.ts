@@ -49,6 +49,9 @@ export const updateAccountSchema = z
     transport_profile_id: z
       .string()
       .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/)
+      .describe(
+        "External bridge profile ID, or gw-token-<account id> to run this account's own stored credential through the gateway-managed Agent SDK profile",
+      )
       .nullish(),
   })
   .strict()
