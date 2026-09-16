@@ -70,8 +70,8 @@ if (
   const pkg = JSON.parse(
     await readFile(join(directory, "../package.json"), "utf8"),
   );
-  if (pkg.version !== "1.66.0")
-    throw new Error("Token profiles require Meridian 1.66.0");
+  if (pkg.version !== "1.71.1")
+    throw new Error("Token profiles require Meridian 1.71.1");
   let patched = 0;
   for (const file of await readdir(directory)) {
     if (!file.endsWith(".js")) continue;

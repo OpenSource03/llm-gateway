@@ -73,7 +73,7 @@ unavailable rather than increasing probe frequency or trusting stale limits.
 Apply the generated `claude_token_accounts` and `token_probe_accounting`
 migrations through the normal pinned migration job, then deploy the gateway.
 For SDK token accounts, rebuild the optional sidecar too: its pinned Meridian
-1.66.0 patch supplies tokens only in authenticated private requests and isolated
+1.71.1 patch supplies tokens only in authenticated private requests and isolated
 subprocess environments. Tokens are not written to Meridian profile files.
 Keep `/tmp` on tmpfs as in the supplied Compose overlay. Token sessions are
 isolated from host profiles and use stable gateway-owned profile IDs.

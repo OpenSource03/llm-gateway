@@ -4,15 +4,22 @@ Direct Anthropic transport remains the gateway default. This overlay adds a
 private Meridian sidecar so selected Anthropic accounts can execute through
 Anthropic's Claude Agent SDK instead.
 
+Checkpoint validation, storage guards, safe replay, and structural diagnostics
+are described in [gateway diagnostics](../../docs/gateway-diagnostics.md).
+The overlay defaults to a 1 GiB session tmpfs. Do not restart an active
+token-profile sidecar without a continuity-preserving cutover: its transcripts
+are ephemeral.
+
 Meridian is installed from the exact npm version pinned in the Dockerfile; its
-source is not vendored here. The image applies one narrow, fail-closed patch to
+source is not vendored here. The image applies pinned, fail-closed patches to
 that installed version: an interrupted copy-on-write turn retains its valid
 pre-turn checkpoint instead of deleting it merely because partial assistant
 content reached the client. The canceled fork is still aborted and abandoned,
 so this does not continue generation or increase usage after cancellation.
 
-The checked v1.66.0 package and README declare MIT, but its upstream repository
-did not contain a standalone license text at the reviewed commit. Review that
+The checked v1.71.1 package and README declare MIT, but its upstream repository
+did not contain a standalone license text at the reviewed commit, and the
+package itself ships none. Review that
 status before redistributing a derived image. See
 [`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md).
 
@@ -22,8 +29,12 @@ vendoring the bridge. Rewrites affect discovery only; the bridge must still
 support the target model and receives its explicit canonical ID at inference:
 
 ```bash
-export GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON='[{"from":"claude-fable-5","to":"claude-fable-5-1","displayName":"Claude Fable 5.1"}]'
+export GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON='[{"from":"claude-example-9","to":"claude-example-9-1","displayName":"Claude Example 9.1"}]'
 ```
+
+Prefer upgrading the pinned bridge version. Meridian 1.71.1 publishes
+claude-fable-5-1 ahead of claude-fable-5 and pins it as the canonical fable
+tier, so the earlier Fable rewrite is no longer required and was removed.
 
 Generate the private bridge key and keep it outside the repository:
 
@@ -82,6 +93,13 @@ Linking an existing direct account retains its encrypted credential for an
 explicit rollback. A newly created external-profile account stores no
 Anthropic credential in PostgreSQL. Switching such an account to `direct` is
 rejected unless a direct credential exists.
+
+Do not set `CLAUDE_CONFIG_DIR` inside the container. Meridian verifies the
+host login through the mounted `~/.claude` credentials, and overriding the
+config directory makes `/health` report `Could not verify auth status`, which
+in turn publishes the default external profile as unauthenticated. The
+`Claude configuration file not found` line that accompanies an expired
+session is a secondary diagnostic, not the cause.
 
 Keep Meridian private. For separate hosts, use HTTPS and omit
 `GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE`.

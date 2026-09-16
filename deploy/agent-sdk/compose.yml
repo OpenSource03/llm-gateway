@@ -15,7 +15,7 @@ services:
       context: ../..
       dockerfile: deploy/agent-sdk/Dockerfile
       args:
-        MERIDIAN_VERSION: 1.66.0
+        MERIDIAN_VERSION: 1.71.1
     environment:
       MERIDIAN_API_KEY: ${GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY:?set GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY}
       MERIDIAN_PASSTHROUGH: "1"
@@ -29,7 +29,7 @@ services:
       - agent-sdk-state:/home/node/.config/meridian
     read_only: true
     tmpfs:
-      - /tmp:size=128m,mode=1777
+      - /tmp:size=${GATEWAY_AGENT_SDK_TMPFS_SIZE:-1g},mode=1777
       - /home/node/.cache:size=64m,mode=0700,uid=${GATEWAY_UID:-1000},gid=${GATEWAY_GID:-1000}
       - /home/node/.local/share:size=64m,mode=0700,uid=${GATEWAY_UID:-1000},gid=${GATEWAY_GID:-1000}
     security_opt:
@@ -37,6 +37,11 @@ services:
     cap_drop:
       - ALL
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "10"
 
   gateway:
     environment:
