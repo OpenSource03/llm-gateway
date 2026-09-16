@@ -181,6 +181,22 @@ test(
         where: { id: created.id },
         data: { status: "ACTIVE" },
       });
+      // A transient provider failure must not latch the account out of the
+      // routable catalog. Every model only this account can serve disappears
+      // while it stays ERROR, so a completed refresh has to restore ACTIVE.
+      await prisma.gatewayProviderAccount.update({
+        where: { id: created.id },
+        data: {
+          status: "ERROR",
+          healthReason: "Provider refresh temporarily unavailable",
+        },
+      });
+      const recovered = await service.refreshGatewayAccount(created.id, {
+        refreshCredential: true,
+      });
+      assert.equal(recovered.status, "ACTIVE");
+      assert.equal(recovered.healthReason, null);
+      assert.equal(recovered.inferenceReady, true);
       await persistGatewayHeaderQuota(created.id, model.id, {
         provider: "anthropic",
         fetchedAt: Date.now(),

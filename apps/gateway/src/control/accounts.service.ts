@@ -1570,6 +1570,14 @@ export const refreshGatewayAccount = async (
         });
         throw error;
       }
+      // A completed catalog and quota refresh clears a prior transient
+      // failure. Without this the account stays ERROR forever and every model
+      // only it can serve silently leaves the routable catalog.
+      await llmGatewayPrisma.gatewayProviderAccount.updateMany({
+        where: { id: account.id, status: { not: "REAUTH_REQUIRED" } },
+        data: { status: "ACTIVE", healthReason: null },
+      });
+
       return toAccountRow(
         await llmGatewayPrisma.gatewayProviderAccount.findUniqueOrThrow({
           where: { id: account.id },
