@@ -17,6 +17,7 @@ RUN node /tmp/preserve-cancelled-checkpoint.mjs \
 FROM node:22-bookworm-slim AS runtime
 
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends ca-certificates dumb-init && \
     rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm && \
     rm -f /usr/local/bin/npm /usr/local/bin/npx && \

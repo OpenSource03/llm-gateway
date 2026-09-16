@@ -3,6 +3,11 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.1
+
+- Upgrade Debian packages in every image stage so the runtime, migrator, and
+  bridge images ship the patched `libpcre2` (CVE-2026-86145, CVE-2026-89161).
+
 ## 0.2.0
 
 - Run browser-login Claude accounts through the Agent SDK bridge with the

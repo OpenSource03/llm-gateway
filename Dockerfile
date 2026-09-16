@@ -2,6 +2,7 @@
 
 FROM node:22-bookworm-slim AS dependencies
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends openssl ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@8.15.4 --activate
@@ -40,6 +41,7 @@ CMD ["node", "node_modules/prisma/build/index.js", "migrate", "deploy", "--confi
 
 FROM node:22-bookworm-slim AS runtime
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends dumb-init ca-certificates && \
     rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm && \
     rm -f /usr/local/bin/npm /usr/local/bin/npx
