@@ -31,8 +31,10 @@ not Prisma's migration CLI.
 Run `az deployment group what-if` before deploying. Start the migration job
 after publishing a reviewed image and before shifting data-plane traffic.
 
-An Agent SDK bridge may be deployed separately with private ingress. Set
-`agentSdkUrl` and the secure `agentSdkApiKey` parameter to make it available;
-accounts still use direct transport until linked through the control API. Keep
+The App Service module can deploy the Agent SDK bridge as a third private app
+(`agentSdkAppName` plus `agentSdkImage`; see [app-service.md](app-service.md)).
+Alternatively, deploy a bridge separately with private ingress and set
+`agentSdkUrl` with the secure `agentSdkApiKey` parameter. Accounts still use
+direct transport until switched through the control API or Admin. Keep
 `agentSdkAllowInsecure=false` unless Container Apps networking or a service
 mesh provides the compensating private trust boundary.

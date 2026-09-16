@@ -83,9 +83,23 @@ the public data app's SCM ingress is denied. Deployment uses ARM image updates,
 not SCM uploads. The module follows Microsoft's [container configuration](https://learn.microsoft.com/en-us/azure/app-service/configure-custom-container)
 and [site resource schema](https://learn.microsoft.com/en-us/azure/templates/microsoft.web/2024-11-01/sites).
 
-The optional SDK URL must be HTTPS and privately reachable. Supplying it does
-not deploy a bridge or change account transports. Keep its dedicated service key
-in the secret store and retain the existing [redistribution boundary](../../THIRD_PARTY_NOTICES.md).
+## Optional private Agent SDK bridge
+
+Set `agentSdkAppName` and `agentSdkImage` to add a third container app on the
+same plan running the pinned Meridian image from [`deploy/agent-sdk`](../agent-sdk/README.md).
+It disables public network access, receives its own private endpoint and DNS
+zone group, listens on port 3456, and is health-checked on `/health`. Both
+gateway apps then receive `GATEWAY_ANTHROPIC_AGENT_SDK_URL` set to the bridge's
+HTTPS hostname; the shared `agentSdkApiKey` becomes the bridge's
+`MERIDIAN_API_KEY`. The bridge is stateless: no login is stored in it, the
+gateway supplies each account's current token in private requests, and session
+transcripts live in the container's ephemeral `/tmp`, so an image update
+restarts active Agent SDK sessions.
+
+Without `agentSdkAppName`, an externally hosted bridge may still be supplied
+through `agentSdkUrl`; it must be HTTPS and privately reachable. Supplying
+either does not change account transports. Keep the dedicated service key in
+the secret store and retain the existing [redistribution boundary](../../THIRD_PARTY_NOTICES.md).
 
 Compile locally:
 

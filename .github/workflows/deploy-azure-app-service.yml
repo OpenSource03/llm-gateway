@@ -36,6 +36,7 @@ jobs:
       GATEWAY_MIGRATION_JOB: ${{ vars.GATEWAY_MIGRATION_JOB }}
       GATEWAY_MIGRATION_EXPECTED_HOST: ${{ vars.GATEWAY_MIGRATION_EXPECTED_HOST }}
       GATEWAY_MIGRATION_EXPECTED_DATABASE: ${{ vars.GATEWAY_MIGRATION_EXPECTED_DATABASE }}
+      GATEWAY_AGENT_SDK_APP: ${{ vars.GATEWAY_AGENT_SDK_APP }}
     defaults:
       run:
         shell: bash
@@ -55,6 +56,9 @@ jobs:
             [[ "$GATEWAY_MIGRATION_JOB" =~ ^llm-gateway-migrate-[a-z0-9-]+$ ]]
             [[ "$GATEWAY_MIGRATION_EXPECTED_HOST" =~ ^[a-z0-9-]+\.postgres\.database\.azure\.com$ ]]
             [[ "$GATEWAY_MIGRATION_EXPECTED_DATABASE" =~ ^llm_gateway[a-z0-9_]*$ ]]
+            if [[ -n "${GATEWAY_AGENT_SDK_APP:-}" ]]; then
+              [[ "$GATEWAY_AGENT_SDK_APP" =~ ^app-llm-gateway-agent-sdk-[a-z0-9-]+$ ]]
+            fi
           fi
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -83,9 +87,10 @@ jobs:
           echo "server=$registry" >> "$GITHUB_OUTPUT"
           az acr login --name "$GATEWAY_ACR_NAME" --output none
           repositories=$(az acr repository list --name "$GATEWAY_ACR_NAME" -o json)
-          for target in runtime migrator; do
+          for target in runtime migrator agentsdk; do
             repository=llm-gateway
             if [[ "$target" == migrator ]]; then repository=llm-gateway-migrator; fi
+            if [[ "$target" == agentsdk ]]; then repository=llm-gateway-agent-sdk; fi
             exists=false
             if jq -e --arg repository "$repository" 'index($repository) != null' <<< "$repositories" >/dev/null; then
               tags=$(az acr repository show-tags --name "$GATEWAY_ACR_NAME" --repository "$repository" -o json)
@@ -120,15 +125,28 @@ jobs:
           tags: ${{ steps.registry.outputs.server }}/llm-gateway-migrator:${{ inputs.source_sha }}
           labels: org.opencontainers.image.revision=${{ inputs.source_sha }}
 
+      - name: Publish Agent SDK bridge
+        if: steps.registry.outputs.agentsdk_exists != 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: deploy/agent-sdk/Dockerfile
+          target: runtime
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.registry.outputs.server }}/llm-gateway-agent-sdk:${{ inputs.source_sha }}
+          labels: org.opencontainers.image.revision=${{ inputs.source_sha }}
+
       - name: Lock tags and resolve deployment digests
         id: images
         env:
           REGISTRY: ${{ steps.registry.outputs.server }}
         run: |
           set -euo pipefail
-          for target in runtime migrator; do
+          for target in runtime migrator agentsdk; do
             repository=llm-gateway
             if [[ "$target" == migrator ]]; then repository=llm-gateway-migrator; fi
+            if [[ "$target" == agentsdk ]]; then repository=llm-gateway-agent-sdk; fi
             az acr repository update --name "$GATEWAY_ACR_NAME" \
               --image "$repository:$SOURCE_SHA" --write-enabled false --delete-enabled false -o none
             digest=$(az acr repository show --name "$GATEWAY_ACR_NAME" \
@@ -200,6 +218,22 @@ jobs:
               --query linuxFxVersion -o tsv)
             [[ "$configured" == "DOCKER|$RUNTIME_IMAGE" ]]
           done
+
+      - name: Update the private Agent SDK bridge image
+        if: inputs.deploy && env.GATEWAY_AGENT_SDK_APP != ''
+        env:
+          AGENT_SDK_IMAGE: ${{ steps.images.outputs.agentsdk }}
+        run: |
+          set -euo pipefail
+          previous=$(az webapp config show --name "$GATEWAY_AGENT_SDK_APP" --resource-group "$GATEWAY_RESOURCE_GROUP" \
+            --query linuxFxVersion -o tsv)
+          printf 'Previous image for %s: %s\n\n' "$GATEWAY_AGENT_SDK_APP" "$previous" >> "$GITHUB_STEP_SUMMARY"
+          az webapp config set --name "$GATEWAY_AGENT_SDK_APP" --resource-group "$GATEWAY_RESOURCE_GROUP" \
+            --linux-fx-version "DOCKER|$AGENT_SDK_IMAGE" -o none
+          configured=$(az webapp config show --name "$GATEWAY_AGENT_SDK_APP" --resource-group "$GATEWAY_RESOURCE_GROUP" \
+            --query linuxFxVersion -o tsv)
+          [[ "$configured" == "DOCKER|$AGENT_SDK_IMAGE" ]]
+          printf 'The bridge is private: verify its /health from an authorized network. Existing token-profile sessions restart with the image.\n\n' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Require public data readiness
         if: inputs.deploy

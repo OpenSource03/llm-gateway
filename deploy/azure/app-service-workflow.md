@@ -9,18 +9,19 @@ access to the two gateway apps. Grant no access to integrating applications.
 
 Configure these environment variables:
 
-| Variable                              | Value                                           |
-| ------------------------------------- | ----------------------------------------------- |
-| `AZURE_DEPLOY_CLIENT_ID`              | Dedicated deployment managed identity client ID |
-| `AZURE_TENANT_ID`                     | Azure tenant ID                                 |
-| `AZURE_SUBSCRIPTION_ID`               | Azure subscription ID                           |
-| `GATEWAY_RESOURCE_GROUP`              | Dedicated group beginning `rg-llm-gateway-`     |
-| `GATEWAY_ACR_NAME`                    | Registry name in that group                     |
-| `GATEWAY_DATA_APP`                    | App name beginning `app-llm-gateway-data-`      |
-| `GATEWAY_CONTROL_APP`                 | App name beginning `app-llm-gateway-control-`   |
-| `GATEWAY_MIGRATION_JOB`               | Job name beginning `llm-gateway-migrate-`       |
-| `GATEWAY_MIGRATION_EXPECTED_HOST`     | Dedicated PostgreSQL server hostname            |
-| `GATEWAY_MIGRATION_EXPECTED_DATABASE` | Database name beginning `llm_gateway`           |
+| Variable                              | Value                                                           |
+| ------------------------------------- | --------------------------------------------------------------- |
+| `AZURE_DEPLOY_CLIENT_ID`              | Dedicated deployment managed identity client ID                 |
+| `AZURE_TENANT_ID`                     | Azure tenant ID                                                 |
+| `AZURE_SUBSCRIPTION_ID`               | Azure subscription ID                                           |
+| `GATEWAY_RESOURCE_GROUP`              | Dedicated group beginning `rg-llm-gateway-`                     |
+| `GATEWAY_ACR_NAME`                    | Registry name in that group                                     |
+| `GATEWAY_DATA_APP`                    | App name beginning `app-llm-gateway-data-`                      |
+| `GATEWAY_CONTROL_APP`                 | App name beginning `app-llm-gateway-control-`                   |
+| `GATEWAY_MIGRATION_JOB`               | Job name beginning `llm-gateway-migrate-`                       |
+| `GATEWAY_MIGRATION_EXPECTED_HOST`     | Dedicated PostgreSQL server hostname                            |
+| `GATEWAY_MIGRATION_EXPECTED_DATABASE` | Database name beginning `llm_gateway`                           |
+| `GATEWAY_AGENT_SDK_APP`               | Optional bridge app name beginning `app-llm-gateway-agent-sdk-` |
 
 Federate the deployment identity to this repository's
 `environment:azure-production` subject. The registry must allow the GitHub
@@ -36,6 +37,12 @@ CI publishes runtime and migrator images without requiring the job or apps to
 exist. Use the resulting digests to provision and run the migration job; require
 success before provisioning the apps. This avoids starting an app against an
 empty schema.
+
+CI also publishes the pinned Meridian bridge image from
+`deploy/agent-sdk/Dockerfile` as `llm-gateway-agent-sdk:<sha>` on every
+dispatch. When `GATEWAY_AGENT_SDK_APP` is set, the bridge app receives that
+digest after the two gateway apps; the bridge is private, so its `/health` is
+verified by an operator from an authorized network, not by CI.
 
 Later dispatches use `deploy=true`. CI preserves the complete existing job
 template, overrides only its container image for that execution, and waits for

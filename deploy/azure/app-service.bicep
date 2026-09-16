@@ -70,7 +70,20 @@ param agentSdkApiKey string = ''
 @description('Bounded JSON array of external bridge catalog corrections.')
 param agentSdkModelRewritesJson string = '[]'
 
+@description('Optional globally unique name for the private Agent SDK bridge app on the same plan; empty deploys no bridge.')
+@maxLength(60)
+param agentSdkAppName string = ''
+
+@description('Bridge image in the existing ACR, including registry host and an immutable digest or commit tag; required with agentSdkAppName.')
+param agentSdkImage string = ''
+
 param tags object = {}
+
+var bridgeEnabled = !empty(agentSdkAppName)
+// A deployed bridge is addressed by its private-endpoint hostname; TLS requires the hostname.
+var effectiveAgentSdkUrl = bridgeEnabled
+  ? 'https://${bridgeApp!.properties.defaultHostName}'
+  : agentSdkUrl
 
 var commonSettings = concat([
   { name: 'NODE_ENV', value: 'production' }
@@ -86,8 +99,8 @@ var commonSettings = concat([
   { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
   { name: 'WEBSITE_WARMUP_PATH', value: '/health/ready' }
   { name: 'WEBSITE_WARMUP_STATUSES', value: '200' }
-], empty(agentSdkUrl) ? [] : [
-  { name: 'GATEWAY_ANTHROPIC_AGENT_SDK_URL', value: agentSdkUrl }
+], empty(effectiveAgentSdkUrl) ? [] : [
+  { name: 'GATEWAY_ANTHROPIC_AGENT_SDK_URL', value: effectiveAgentSdkUrl }
   { name: 'GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY', value: agentSdkApiKey }
   { name: 'GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE', value: 'false' }
   { name: 'GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON', value: agentSdkModelRewritesJson }
@@ -194,6 +207,98 @@ resource controlScmPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicie
   properties: { allow: false }
 }
 
+// Stateless private Meridian bridge. It stores no login: the gateway supplies
+// each account's current token in private requests (see deploy/agent-sdk).
+resource bridgeApp 'Microsoft.Web/sites@2024-11-01' = if (bridgeEnabled) {
+  name: agentSdkAppName
+  location: location
+  kind: 'app,linux,container'
+  tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${managedIdentityResourceId}': {} }
+  }
+  properties: {
+    serverFarmId: appServicePlanId
+    httpsOnly: true
+    clientAffinityEnabled: false
+    publicNetworkAccess: 'Disabled'
+    virtualNetworkSubnetId: integrationSubnetId
+    outboundVnetRouting: {
+      applicationTraffic: vnetRouteAllEnabled
+      imagePullTraffic: vnetImagePullEnabled
+    }
+    siteConfig: {
+      linuxFxVersion: 'DOCKER|${agentSdkImage}'
+      appCommandLine: ''
+      acrUseManagedIdentityCreds: true
+      acrUserManagedIdentityID: managedIdentityClientId
+      alwaysOn: true
+      ftpsState: 'Disabled'
+      minTlsVersion: '1.2'
+      scmMinTlsVersion: '1.2'
+      http20Enabled: true
+      remoteDebuggingEnabled: false
+      healthCheckPath: '/health'
+      scmIpSecurityRestrictionsDefaultAction: 'Deny'
+      appSettings: [
+        { name: 'NODE_ENV', value: 'production' }
+        { name: 'MERIDIAN_API_KEY', value: agentSdkApiKey }
+        { name: 'MERIDIAN_HOST', value: '0.0.0.0' }
+        { name: 'MERIDIAN_PORT', value: '3456' }
+        { name: 'MERIDIAN_PASSTHROUGH', value: '1' }
+        { name: 'MERIDIAN_SUPPRESS_SCRATCHPAD', value: '1' }
+        { name: 'WEBSITES_PORT', value: '3456' }
+        { name: 'DOCKER_REGISTRY_SERVER_URL', value: 'https://${acrLoginServer}' }
+        { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'false' }
+        { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
+        { name: 'WEBSITE_WARMUP_PATH', value: '/health' }
+        { name: 'WEBSITE_WARMUP_STATUSES', value: '200' }
+      ]
+    }
+  }
+}
+
+resource bridgeFtpPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-11-01' = if (bridgeEnabled) {
+  parent: bridgeApp
+  name: 'ftp'
+  properties: { allow: false }
+}
+
+resource bridgeScmPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-11-01' = if (bridgeEnabled) {
+  parent: bridgeApp
+  name: 'scm'
+  properties: { allow: false }
+}
+
+resource bridgePrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = if (bridgeEnabled) {
+  name: '${agentSdkAppName}-pe'
+  location: privateEndpointLocation
+  tags: tags
+  properties: {
+    subnet: { id: privateEndpointSubnetId }
+    privateLinkServiceConnections: [
+      {
+        name: '${agentSdkAppName}-sites'
+        properties: {
+          privateLinkServiceId: bridgeApp.id
+          groupIds: ['sites']
+        }
+      }
+    ]
+  }
+}
+
+resource bridgePrivateDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (bridgeEnabled) {
+  parent: bridgePrivateEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      { name: 'app-service', properties: { privateDnsZoneId: privateDnsZoneId } }
+    ]
+  }
+}
+
 resource controlPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
   name: '${controlAppName}-pe'
   location: privateEndpointLocation
@@ -228,3 +333,4 @@ output dataDefaultHostname string = dataApp.properties.defaultHostName
 output controlDefaultHostname string = controlApp.properties.defaultHostName
 output controlBaseUrl string = 'https://${controlApp.properties.defaultHostName}/admin/v1'
 output controlPrivateEndpointId string = controlPrivateEndpoint.id
+output agentSdkBaseUrl string = effectiveAgentSdkUrl
