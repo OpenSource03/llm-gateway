@@ -3,6 +3,8 @@ import type { ControlVariables } from "../middleware/control-principal";
 import { Hono } from "hono";
 
 import { getEnv } from "../config/env";
+import Logger from "../config/logger";
+import { runWithRequestDiagnostics } from "../config/request-diagnostics";
 import { gatewayAuditMiddleware } from "../core/gateway-audit";
 import dataPlaneRoutes from "../core/data-plane.routes";
 import {
@@ -20,15 +22,24 @@ export const buildDataApp = (): Hono => {
   const legacy = getEnv().GATEWAY_LEGACY_BASE_PATH.replace(/\/$/, "");
 
   app.use("*", async (context, next) => {
-    const startedAt = performance.now();
+    return runWithRequestDiagnostics(async () => {
+      const startedAt = performance.now();
 
-    await next();
-    observeHttpDispatch(
-      "data",
-      context.req.method,
-      context.res.status,
-      performance.now() - startedAt,
-    );
+      await next();
+      observeHttpDispatch(
+        "data",
+        context.req.method,
+        context.res.status,
+        performance.now() - startedAt,
+      );
+      Logger.info("Gateway HTTP dispatched", {
+        plane: "data",
+        route: context.req.routePath,
+        method: context.req.method,
+        status: context.res.status,
+        dispatchMs: Math.round(performance.now() - startedAt),
+      });
+    });
   });
   app.route("/", buildHealthRoutes(false));
   app.route("/", dataPlaneRoutes);
@@ -42,15 +53,24 @@ export const buildControlApp = (): Hono<{ Variables: ControlVariables }> => {
 
   app.onError(controlErrorHandler);
   app.use("*", async (context, next) => {
-    const startedAt = performance.now();
+    return runWithRequestDiagnostics(async () => {
+      const startedAt = performance.now();
 
-    await next();
-    observeHttpDispatch(
-      "control",
-      context.req.method,
-      context.res.status,
-      performance.now() - startedAt,
-    );
+      await next();
+      observeHttpDispatch(
+        "control",
+        context.req.method,
+        context.res.status,
+        performance.now() - startedAt,
+      );
+      Logger.info("Gateway HTTP dispatched", {
+        plane: "control",
+        route: context.req.routePath,
+        method: context.req.method,
+        status: context.res.status,
+        dispatchMs: Math.round(performance.now() - startedAt),
+      });
+    });
   });
   app.route("/", buildHealthRoutes(true));
   app.use("/admin/v1/*", async (context, next) => {

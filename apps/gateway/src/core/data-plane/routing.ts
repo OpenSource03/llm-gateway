@@ -1,5 +1,6 @@
 import type { GatewayClientPrincipal } from "../../control/client-keys.service";
 import type { RoutingMemberCandidate, RoutingPolicy } from "../routing/types";
+import Logger from "../../config/logger";
 
 import {
   accountUsageWindowStart,
@@ -385,6 +386,7 @@ export const routeAccount = async (input: {
   retry: boolean;
   excludedAccountIds: Set<string>;
   requestKey: string;
+  diagnosticRequestId?: string;
   leaseGuard?: LeaseGuard;
 }): Promise<RoutedAccount> => {
   input.leaseGuard?.throwIfFailed();
@@ -420,6 +422,23 @@ export const routeAccount = async (input: {
     estimatedOutputTokens: input.estimatedOutputTokens,
     quotaMaxAgeMs: loaded.pool.quotaMaxAgeSeconds * 1_000,
     shortResetGraceMs: loaded.pool.shortResetGraceSeconds * 1_000,
+  });
+  Logger.info("Gateway routing evaluated", {
+    requestId: input.diagnosticRequestId,
+    sessionHash,
+    poolId: loaded.pool.id,
+    policy: loaded.pool.policy,
+    stickyEnabled: loaded.pool.stickySessions,
+    previousAccountId: existing?.accountId ?? null,
+    selection: selection.kind,
+    selectedAccountId:
+      selection.kind === "unavailable" ? null : selection.accountId,
+    evaluations: selection.evaluations.map((item) => ({
+      accountId: item.accountId,
+      reasons: item.reasons,
+      retryAt: item.retryAt,
+      bindingUsedRatio: item.bindingUsedRatio,
+    })),
   });
 
   if (selection.kind === "hold") {

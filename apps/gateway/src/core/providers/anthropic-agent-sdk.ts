@@ -547,6 +547,8 @@ export class AnthropicAgentSdkTransport {
         );
       headers.set("x-llmgw-oauth-token", input.secret.accessToken);
     }
+    if (input.diagnosticRequestId)
+      headers.set("x-request-id", input.diagnosticRequestId);
     headers.set("anthropic-version", "2023-06-01");
     if (input.sessionId) {
       headers.set("x-litellm-session-id", input.sessionId);
@@ -600,6 +602,8 @@ export class AnthropicAgentSdkTransport {
         );
       headers.set("x-llmgw-oauth-token", input.secret.accessToken);
     }
+    if (input.diagnosticRequestId)
+      headers.set("x-request-id", input.diagnosticRequestId);
     headers.set("anthropic-version", "2023-06-01");
     if (sessionId) headers.set("x-codex-session", sessionId);
 

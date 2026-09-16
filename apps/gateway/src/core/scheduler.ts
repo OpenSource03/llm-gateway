@@ -58,9 +58,14 @@ export const refreshDueGatewayAccounts = async (
 
   if (!globalLease) return 0;
   const heartbeat = setInterval(() => {
-    void heartbeatLease(globalLease, GLOBAL_REFRESH_LEASE_MS).catch(
-      () => undefined,
-    );
+    void heartbeatLease(globalLease, GLOBAL_REFRESH_LEASE_MS)
+      .then((held) => {
+        if (!held)
+          Logger.warn("Gateway background lease expired", {
+            job: "quota-and-model-refresh",
+          });
+      })
+      .catch((error) => logJobFailure("quota-refresh-heartbeat", error));
   }, 60_000);
 
   heartbeat.unref?.();
@@ -98,6 +103,9 @@ export const refreshDueGatewayAccounts = async (
     for (const account of due) {
       try {
         await refreshGatewayAccount(account.id);
+        Logger.info("Gateway account refresh completed", {
+          accountId: account.id,
+        });
       } catch (error) {
         Logger.warn("LLM gateway account refresh failed", {
           accountId: account.id,
@@ -126,9 +134,14 @@ export const runGatewayHousekeeping = async (
 
   if (!globalLease) return;
   const heartbeat = setInterval(() => {
-    void heartbeatLease(globalLease, GLOBAL_HOUSEKEEPING_LEASE_MS).catch(
-      () => undefined,
-    );
+    void heartbeatLease(globalLease, GLOBAL_HOUSEKEEPING_LEASE_MS)
+      .then((held) => {
+        if (!held)
+          Logger.warn("Gateway background lease expired", {
+            job: "housekeeping",
+          });
+      })
+      .catch((error) => logJobFailure("housekeeping-heartbeat", error));
   }, 60_000);
 
   heartbeat.unref?.();
@@ -166,6 +179,10 @@ export const runGatewayHousekeeping = async (
       }),
       deleteExpiredLeases(now),
     ]);
+    Logger.info("Gateway housekeeping completed", {
+      historyCutoff,
+      oauthCutoff,
+    });
   } finally {
     clearInterval(heartbeat);
     await releaseLease(globalLease);

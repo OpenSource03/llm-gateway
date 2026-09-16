@@ -5,6 +5,7 @@ import type { PrismaClient as GatewayPrismaClient } from "../generated/prisma/cl
 
 import { PrismaClient } from "../generated/prisma/client";
 import { getEnv } from "../config/env";
+import Logger from "../config/logger";
 
 const globalForGatewayPrisma = globalThis as unknown as {
   llmGatewayPrisma?: GatewayPrismaClient;
@@ -29,8 +30,49 @@ const createGatewayPrisma = () => {
   });
 
   globalForGatewayPrisma.llmGatewayPool = pool;
+  pool.on("error", () => {
+    Logger.error("Gateway database idle connection failed", {
+      totalConnections: pool.totalCount,
+      waitingClients: pool.waitingCount,
+    });
+  });
 
-  return new PrismaClient({ adapter: new PrismaPg(pool) });
+  return new PrismaClient({ adapter: new PrismaPg(pool) }).$extends({
+    query: {
+      $allModels: {
+        async $allOperations({ model, operation, args, query }) {
+          const startedAt = performance.now();
+          try {
+            const result = await query(args);
+            const durationMs = Math.round(performance.now() - startedAt);
+            if (durationMs >= 250)
+              Logger.warn("Gateway database operation slow", {
+                model,
+                operation,
+                durationMs,
+              });
+            return result;
+          } catch (error) {
+            const code =
+              error &&
+              typeof error === "object" &&
+              "code" in error &&
+              typeof error.code === "string" &&
+              /^P\d{4}$/.test(error.code)
+                ? error.code
+                : "DATABASE_ERROR";
+            Logger.error("Gateway database operation failed", {
+              model,
+              operation,
+              code,
+              durationMs: Math.round(performance.now() - startedAt),
+            });
+            throw error;
+          }
+        },
+      },
+    },
+  }) as unknown as GatewayPrismaClient;
 };
 
 export const getLlmGatewayPrisma = (): GatewayPrismaClient => {

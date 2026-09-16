@@ -47,6 +47,11 @@ services:
     build:
       context: ../..
       target: runtime
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "10"
     environment:
       NODE_ENV: production
       GATEWAY_DATABASE_URL: postgresql://${POSTGRES_USER:-llm_gateway}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-llm_gateway}

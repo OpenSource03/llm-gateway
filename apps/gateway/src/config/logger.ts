@@ -1,7 +1,9 @@
 import pino from "pino";
+import { requestDiagnosticContext } from "./request-diagnostics";
 
 const base = pino({
   level: process.env.LOG_LEVEL ?? "info",
+  mixin: requestDiagnosticContext,
   redact: {
     paths: [
       "authorization",

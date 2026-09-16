@@ -168,6 +168,8 @@ export type ProviderAccessVerification =
     };
 
 export interface PrepareInferenceInput {
+  /** Gateway-generated correlation ID; never a client-provided header. */
+  diagnosticRequestId?: string;
   request: AnthropicMessagesRequest;
   upstreamModel: string;
   publicModel: string;
@@ -185,6 +187,8 @@ export interface PrepareInferenceInput {
 }
 
 export interface PrepareResponsesInferenceInput {
+  /** Gateway-generated correlation ID; never a client-provided header. */
+  diagnosticRequestId?: string;
   request: CodexResponsesRequest;
   upstreamModel: string;
   publicModel: string;

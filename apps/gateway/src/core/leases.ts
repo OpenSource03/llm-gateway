@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import Logger from "../config/logger";
 
 import { Prisma } from "../generated/prisma/client";
 
@@ -256,6 +257,10 @@ export class LeaseGuard {
 
   private fail(cause?: unknown): void {
     if (this.stopped || this.controller.signal.aborted) return;
+    Logger.warn("Gateway lease continuity lost", {
+      leaseCount: this.leases.size,
+      reason: cause === undefined ? "lease_expired" : "heartbeat_failed",
+    });
     this.controller.abort(new GatewayLeaseLostError(cause));
   }
 

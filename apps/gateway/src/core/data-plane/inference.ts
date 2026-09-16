@@ -163,6 +163,18 @@ const proxyGatewayRequest = async (
     await leaseGuard.finish();
     throw error;
   }
+  Logger.info("Gateway inference accepted", {
+    requestId: requestLog.id,
+    clientKeyId: input.principal.id,
+    modelId: model.id,
+    protocol: input.kind,
+    sessionHash: sessionId ? hmacGatewaySession(sessionId) : null,
+    providerSessionHash: providerSessionId
+      ? hmacGatewaySession(providerSessionId)
+      : null,
+    estimatedInputTokens,
+    projectedOutputTokens,
+  });
   let currentAccountReconcile:
     | ((actual: {
         inputTokens?: number;
@@ -224,6 +236,7 @@ const proxyGatewayRequest = async (
         retry: attempt > 0,
         excludedAccountIds: excluded,
         requestKey: sessionId ?? requestLog.id,
+        diagnosticRequestId: requestLog.id,
         leaseGuard,
       });
 
@@ -312,6 +325,13 @@ const proxyGatewayRequest = async (
           }
           leaseGuard.throwIfFailed();
         } catch (error) {
+          Logger.warn("Gateway credential preparation failed", {
+            requestId: requestLog.id,
+            accountId: routed.accountId,
+            aborted: upstreamSignal.aborted,
+            status:
+              error instanceof ProviderProtocolError ? error.status : undefined,
+          });
           const refreshRejected =
             (error instanceof ProviderProtocolError &&
               (error.status === 400 || error.status === 401)) ||
@@ -362,6 +382,7 @@ const proxyGatewayRequest = async (
             );
           }
           prepared = await adapter.prepareExternalResponsesInference({
+            diagnosticRequestId: requestLog.id,
             request: input.request,
             upstreamModel: model.upstreamModelId,
             publicModel: model.publicModelId,
@@ -385,6 +406,7 @@ const proxyGatewayRequest = async (
             );
           }
           prepared = await adapter.prepareExternalInference({
+            diagnosticRequestId: requestLog.id,
             request: { ...input.request, model: model.upstreamModelId },
             upstreamModel: model.upstreamModelId,
             publicModel: model.publicModelId,
@@ -465,10 +487,22 @@ const proxyGatewayRequest = async (
 
       try {
         currentAttemptDispatched = true;
+        Logger.info("Gateway upstream dispatched", {
+          requestId: requestLog.id,
+          accountId: routed.accountId,
+          transport: routed.transport.id,
+          attempt,
+        });
         upstream = await fetch(prepared.url, {
           ...prepared.init,
           signal: upstreamSignal,
           redirect: "error",
+        });
+        Logger.info("Gateway upstream headers received", {
+          requestId: requestLog.id,
+          accountId: routed.accountId,
+          attempt,
+          status: upstream.status,
         });
         leaseGuard.throwIfFailed();
       } catch (error) {
@@ -476,6 +510,12 @@ const proxyGatewayRequest = async (
         // provider quota even though no response usage reached us. Keep this
         // account's full projection. Never retry an already-aborted request.
         const aborted = upstreamSignal.aborted || input.signal.aborted;
+        Logger.warn("Gateway upstream dispatch failed", {
+          requestId: requestLog.id,
+          accountId: routed.accountId,
+          attempt,
+          aborted,
+        });
 
         await Promise.allSettled([
           reconcileRoutedAccount({
