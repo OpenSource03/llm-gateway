@@ -3,6 +3,14 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.3
+
+- Bridge: strip the SDK subprocess's own `# Environment` system-reminder (the
+  one naming this container) before requests reach Anthropic. A loopback
+  rewrite listener inside the bridge forwards everything else byte for byte:
+  headers, billing header, model, metadata, streaming. Clients always send
+  their own environment through the gateway, so the model now sees only that.
+
 ## 0.2.2
 
 - Bridge: never prepend the SDK's built-in Claude Code system prompt. Its

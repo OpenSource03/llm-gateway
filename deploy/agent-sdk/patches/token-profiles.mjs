@@ -21,7 +21,7 @@ export function patchTokenProfiles(source) {
         }
         const profile = gatewayProfile ? {
           id: gatewayProfileId, type: "oauth-token",
-          env: { CLAUDE_CODE_OAUTH_TOKEN: gatewayToken, CLAUDE_CONFIG_DIR: "/tmp/llmgw-token-profiles/" + gatewayProfileId, ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "", ANTHROPIC_BASE_URL: "https://api.anthropic.com" }
+          env: { CLAUDE_CODE_OAUTH_TOKEN: gatewayToken, CLAUDE_CONFIG_DIR: "/tmp/llmgw-token-profiles/" + gatewayProfileId, ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "", ANTHROPIC_BASE_URL: "http://127.0.0.1:" + (process.env.GATEWAY_UPSTREAM_REWRITE_PORT || "3460") }
         } : resolveProfile(finalConfig.profiles, finalConfig.defaultProfile, options.forcedProfileId || c.req.header("x-meridian-profile") || undefined, routingMode === "sticky" ? { routingMode, stickySessionKey: adapter.getSessionId(c, body) } : undefined);`,
   );
   source = source.replace(

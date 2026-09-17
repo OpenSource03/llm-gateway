@@ -8,6 +8,8 @@ RUN npm install --global --omit=dev --no-audit --no-fund "@rynfar/meridian@${MER
 COPY deploy/agent-sdk/patches/preserve-cancelled-checkpoint.mjs /tmp/
 COPY deploy/agent-sdk/patches/token-profiles.mjs /tmp/
 COPY deploy/agent-sdk/patches/session-diagnostics*.mjs /tmp/
+COPY deploy/agent-sdk/patches/upstream-rewrite.mjs /usr/local/lib/node_modules/@rynfar/meridian/dist/gateway-upstream-rewrite.mjs
+COPY deploy/agent-sdk/patches/bridge-entry.mjs /usr/local/lib/node_modules/@rynfar/meridian/dist/gateway-bridge-entry.mjs
 RUN node /tmp/preserve-cancelled-checkpoint.mjs \
       /usr/local/lib/node_modules/@rynfar/meridian/dist && \
     node /tmp/token-profiles.mjs /usr/local/lib/node_modules/@rynfar/meridian/dist && \
@@ -43,4 +45,4 @@ HEALTHCHECK --interval=15s --timeout=5s --retries=5 \
   CMD node -e "const r=await fetch('http://127.0.0.1:3456/health');process.exit(r.ok?0:1)"
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "/opt/meridian/dist/cli.js"]
+CMD ["node", "/opt/meridian/dist/gateway-bridge-entry.mjs"]

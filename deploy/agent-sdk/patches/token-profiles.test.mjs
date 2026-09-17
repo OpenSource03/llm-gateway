@@ -79,6 +79,12 @@ test("bridge patches authentication before quota routes and scopes SDK observati
   assert.ok(patched.includes("sdkFeatures.sharedMemory = false"));
   assert.ok(patched.includes("sdkFeatures.codeSystemPrompt = false;"));
   assert.ok(
+    patched.includes(
+      'ANTHROPIC_BASE_URL: "http://127.0.0.1:" + (process.env.GATEWAY_UPSTREAM_REWRITE_PORT || "3460")',
+    ),
+  );
+  assert.equal(patched.includes("https://api.anthropic.com"), false);
+  assert.ok(
     patched.indexOf("sdkFeatures.codeSystemPrompt = false") <
       patched.indexOf("if (gatewayProfile) sdkFeatures.sharedMemory = false"),
   );

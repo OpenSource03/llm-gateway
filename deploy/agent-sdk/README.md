@@ -104,6 +104,15 @@ session is a secondary diagnostic, not the cause.
 Keep Meridian private. For separate hosts, use HTTPS and omit
 `GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE`.
 
+The bundled Claude Code CLI also appends its own `# Environment`
+system-reminder (working directory, platform, OS version of this container)
+to the first user turn. The image therefore starts a loopback rewrite
+listener (`gateway-upstream-rewrite.mjs`, port `GATEWAY_UPSTREAM_REWRITE_PORT`,
+default 3460) and points every SDK subprocess at it. It removes only that
+reminder, matched on this container's working directory, and forwards the
+request otherwise unchanged to `GATEWAY_ANTHROPIC_UPSTREAM` (default
+`https://api.anthropic.com`). It never logs prompt content.
+
 The same patch disables Meridian's built-in Claude Code system prompt for
 every request: the SDK would otherwise prepend an environment block naming
 this container (Linux, `/opt/meridian`) ahead of the client's real one, and
