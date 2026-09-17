@@ -83,6 +83,26 @@ the public data app's SCM ingress is denied. Deployment uses ARM image updates,
 not SCM uploads. The module follows Microsoft's [container configuration](https://learn.microsoft.com/en-us/azure/app-service/configure-custom-container)
 and [site resource schema](https://learn.microsoft.com/en-us/azure/templates/microsoft.web/2024-11-01/sites).
 
+## Optional diagnostics to Log Analytics
+
+Set `logAnalyticsWorkspaceId` to the resource id of an existing workspace to
+ship container stdout and platform events from every deployed app. The module
+then creates one `gateway-diagnostics` setting per app with
+`AppServiceConsoleLogs`, `AppServicePlatformLogs`, `AppServiceAuditLogs` and
+`AppServiceIPSecAuditLogs`, and turns on the filesystem HTTP log switch that a
+Linux container requires before App Service streams its stdout at all.
+
+`AppServiceHTTPLogs` stays disabled on purpose: it records client IP addresses
+and full request URIs, and the gateway already logs the same request without
+them. Application logging stays `Off`, so nothing is written to the site
+filesystem beyond the short HTTP buffer.
+
+Leaving the parameter empty deploys no diagnostic settings and does not touch
+the site log configuration. Ingestion is operational telemetry only; prompts,
+completions, tool payloads, headers and credentials cannot reach the workspace.
+The enforcement points and the saved queries are in
+[docs/gateway-observability.md](../../docs/gateway-observability.md).
+
 ## Optional private Agent SDK bridge
 
 Set `agentSdkAppName` and `agentSdkImage` to add a third container app on the

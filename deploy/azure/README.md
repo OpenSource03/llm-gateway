@@ -31,6 +31,12 @@ not Prisma's migration CLI.
 Run `az deployment group what-if` before deploying. Start the migration job
 after publishing a reviewed image and before shifting data-plane traffic.
 
+Set `logAnalyticsWorkspaceId` to stream container stdout and platform events
+from every deployed app into an existing Log Analytics workspace. It deploys one
+diagnostic setting per app and no prompt content; see
+[app-service.md](app-service.md) and
+[docs/gateway-observability.md](../../docs/gateway-observability.md).
+
 The App Service module can deploy the Agent SDK bridge as a third private app
 (`agentSdkAppName` plus `agentSdkImage`; see [app-service.md](app-service.md)).
 Alternatively, deploy a bridge separately with private ingress and set

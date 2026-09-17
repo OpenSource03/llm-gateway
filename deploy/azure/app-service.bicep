@@ -77,9 +77,35 @@ param agentSdkAppName string = ''
 @description('Bridge image in the existing ACR, including registry host and an immutable digest or commit tag; required with agentSdkAppName.')
 param agentSdkImage string = ''
 
+@description('Optional Log Analytics workspace resource id receiving container and platform diagnostics; empty deploys no diagnostic settings.')
+param logAnalyticsWorkspaceId string = ''
+
 param tags object = {}
 
 var bridgeEnabled = !empty(agentSdkAppName)
+
+var diagnosticsEnabled = !empty(logAnalyticsWorkspaceId)
+// Container stdout and stderr carry the gateway's structured logs and the bridge's
+// session diagnostics. Neither records prompts, completions, tool payloads, headers
+// or credentials; see docs/gateway-observability.md for the enforcement points.
+// AppServiceHTTPLogs is deliberately excluded: it stores client IP addresses and full
+// request URIs, and duplicates the gateway's own request line without them.
+var diagnosticLogCategories = [
+  { category: 'AppServiceConsoleLogs', enabled: true }
+  { category: 'AppServicePlatformLogs', enabled: true }
+  { category: 'AppServiceAuditLogs', enabled: true }
+  { category: 'AppServiceIPSecAuditLogs', enabled: true }
+]
+// A Linux container only streams stdout and stderr while filesystem logging is on.
+var httpLoggingSettings = diagnosticsEnabled
+  ? [{ name: 'WEBSITE_HTTPLOGGING_RETENTION_DAYS', value: '3' }]
+  : []
+var siteLogsProperties = {
+  applicationLogs: { fileSystem: { level: 'Off' } }
+  httpLogs: { fileSystem: { enabled: true, retentionInMb: 100, retentionInDays: 3 } }
+  detailedErrorMessages: { enabled: false }
+  failedRequestsTracing: { enabled: false }
+}
 // A deployed bridge is addressed by its private-endpoint hostname; TLS requires the hostname.
 var effectiveAgentSdkUrl = bridgeEnabled
   ? 'https://${bridgeApp!.properties.defaultHostName}'
@@ -99,7 +125,7 @@ var commonSettings = concat([
   { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
   { name: 'WEBSITE_WARMUP_PATH', value: '/health/ready' }
   { name: 'WEBSITE_WARMUP_STATUSES', value: '200' }
-], empty(effectiveAgentSdkUrl) ? [] : [
+], httpLoggingSettings, empty(effectiveAgentSdkUrl) ? [] : [
   { name: 'GATEWAY_ANTHROPIC_AGENT_SDK_URL', value: effectiveAgentSdkUrl }
   { name: 'GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY', value: agentSdkApiKey }
   { name: 'GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE', value: 'false' }
@@ -241,7 +267,7 @@ resource bridgeApp 'Microsoft.Web/sites@2024-11-01' = if (bridgeEnabled) {
       remoteDebuggingEnabled: false
       healthCheckPath: '/health'
       scmIpSecurityRestrictionsDefaultAction: 'Deny'
-      appSettings: [
+      appSettings: concat([
         { name: 'NODE_ENV', value: 'production' }
         { name: 'MERIDIAN_API_KEY', value: agentSdkApiKey }
         { name: 'MERIDIAN_HOST', value: '0.0.0.0' }
@@ -254,7 +280,7 @@ resource bridgeApp 'Microsoft.Web/sites@2024-11-01' = if (bridgeEnabled) {
         { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
         { name: 'WEBSITE_WARMUP_PATH', value: '/health' }
         { name: 'WEBSITE_WARMUP_STATUSES', value: '200' }
-      ]
+      ], httpLoggingSettings)
     }
   }
 }
@@ -324,6 +350,51 @@ resource controlPrivateDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGro
     privateDnsZoneConfigs: [
       { name: 'app-service', properties: { privateDnsZoneId: privateDnsZoneId } }
     ]
+  }
+}
+
+resource dataSiteLogs 'Microsoft.Web/sites/config@2024-11-01' = if (diagnosticsEnabled) {
+  parent: dataApp
+  name: 'logs'
+  properties: siteLogsProperties
+}
+
+resource controlSiteLogs 'Microsoft.Web/sites/config@2024-11-01' = if (diagnosticsEnabled) {
+  parent: controlApp
+  name: 'logs'
+  properties: siteLogsProperties
+}
+
+resource bridgeSiteLogs 'Microsoft.Web/sites/config@2024-11-01' = if (diagnosticsEnabled && bridgeEnabled) {
+  parent: bridgeApp
+  name: 'logs'
+  properties: siteLogsProperties
+}
+
+resource dataDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (diagnosticsEnabled) {
+  name: 'gateway-diagnostics'
+  scope: dataApp
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: diagnosticLogCategories
+  }
+}
+
+resource controlDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (diagnosticsEnabled) {
+  name: 'gateway-diagnostics'
+  scope: controlApp
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: diagnosticLogCategories
+  }
+}
+
+resource bridgeDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (diagnosticsEnabled && bridgeEnabled) {
+  name: 'gateway-diagnostics'
+  scope: bridgeApp
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: diagnosticLogCategories
   }
 }
 
