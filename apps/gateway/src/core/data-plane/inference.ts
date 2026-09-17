@@ -156,6 +156,7 @@ const proxyGatewayRequest = async (
         sessionHash: sessionId ? hmacGatewaySession(sessionId) : null,
         outcome: "started",
         streamed: input.request.stream === true,
+        testing: input.principal.testing,
       },
       select: { id: true },
     });

@@ -44,6 +44,7 @@ export interface GatewayClientKeyRow {
   status: "active" | "disabled" | "expired" | "revoked";
   allowAllModels: boolean;
   allowedModelIds: string[];
+  testing: boolean;
   maxConcurrency: number | null;
   dailyRequestCap: number | null;
   dailyInputTokenCap: string | null;
@@ -61,6 +62,7 @@ type KeyWithModels = {
   keyPrefix: string;
   enabled: boolean;
   allowAllModels: boolean;
+  testing: boolean;
   maxConcurrency: number | null;
   dailyRequestCap: number | null;
   dailyInputTokenCap: bigint | null;
@@ -87,6 +89,7 @@ const toRow = (key: KeyWithModels): GatewayClientKeyRow => ({
         : "disabled",
   allowAllModels: key.allowAllModels,
   allowedModelIds: key.allowedModels.map(({ model }) => model.publicModelId),
+  testing: key.testing,
   maxConcurrency: key.maxConcurrency,
   dailyRequestCap: key.dailyRequestCap,
   dailyInputTokenCap: key.dailyInputTokenCap?.toString() ?? null,
@@ -122,13 +125,14 @@ export interface CreateGatewayClientKeyInput {
   dailyRequestCap?: number | null;
   dailyInputTokenCap?: bigint | null;
   dailyOutputTokenCap?: bigint | null;
+  testing?: boolean;
 }
 
-export const createGatewayClientKey = async (
-  actor: ActorReference,
-  input: CreateGatewayClientKeyInput,
-): Promise<GatewayClientKeyRow & { key: string }> => {
-  const requested = [...new Set(input.allowedModelIds)];
+const resolveAllowedModels = async (
+  allowAllModels: boolean,
+  allowedModelIds: string[],
+): Promise<Array<{ id: string; publicModelId: string }>> => {
+  const requested = [...new Set(allowedModelIds)];
   const models = requested.length
     ? await llmGatewayPrisma.gatewayModel.findMany({
         where: { publicModelId: { in: requested }, enabled: true },
@@ -136,7 +140,7 @@ export const createGatewayClientKey = async (
       })
     : [];
 
-  if (!input.allowAllModels && requested.length === 0) {
+  if (!allowAllModels && requested.length === 0) {
     throw new GatewayError(
       "Select at least one model or allow all enabled models",
       400,
@@ -151,6 +155,18 @@ export const createGatewayClientKey = async (
     );
   }
 
+  return models;
+};
+
+export const createGatewayClientKey = async (
+  actor: ActorReference,
+  input: CreateGatewayClientKeyInput,
+): Promise<GatewayClientKeyRow & { key: string }> => {
+  const models = await resolveAllowedModels(
+    input.allowAllModels,
+    input.allowedModelIds,
+  );
+
   const generated = createGatewayClientSecret();
   const expiresAt = input.expiresInDays
     ? new Date(Date.now() + input.expiresInDays * DAY_MS)
@@ -163,6 +179,7 @@ export const createGatewayClientKey = async (
       keyHash: generated.hash,
       keyPrefix: generated.prefix,
       allowAllModels: input.allowAllModels,
+      testing: input.testing ?? false,
       maxConcurrency: input.maxConcurrency ?? null,
       dailyRequestCap: input.dailyRequestCap ?? null,
       dailyInputTokenCap: input.dailyInputTokenCap ?? null,
@@ -177,6 +194,91 @@ export const createGatewayClientKey = async (
   });
 
   return { ...toRow(created), key: generated.secret };
+};
+
+export interface UpdateGatewayClientKeyInput {
+  name?: string;
+  ownerLabel?: string;
+  ownerEmail?: string | null;
+  enabled?: boolean;
+  allowAllModels?: boolean;
+  allowedModelIds?: string[];
+  expiresInDays?: number | null;
+  maxConcurrency?: number | null;
+  dailyRequestCap?: number | null;
+  dailyInputTokenCap?: bigint | null;
+  dailyOutputTokenCap?: bigint | null;
+  testing?: boolean;
+}
+
+/** Edits metadata, limits, model grants, and testing mode; never the secret. */
+export const updateGatewayClientKey = async (
+  keyId: string,
+  input: UpdateGatewayClientKeyInput,
+): Promise<GatewayClientKeyRow> => {
+  const existing = await llmGatewayPrisma.gatewayClientKey.findUnique({
+    where: { id: keyId },
+    include: includeModels,
+  });
+
+  if (!existing)
+    throw new GatewayError("Client key not found", 404, "NOT_FOUND");
+  if (existing.revokedAt)
+    throw new GatewayError(
+      "Revoked client keys cannot be edited",
+      409,
+      "GATEWAY_KEY_REVOKED",
+    );
+  const modelsChanged =
+    input.allowAllModels !== undefined || input.allowedModelIds !== undefined;
+  const allowAllModels = input.allowAllModels ?? existing.allowAllModels;
+  const models = modelsChanged
+    ? await resolveAllowedModels(
+        allowAllModels,
+        input.allowedModelIds ??
+          existing.allowedModels.map(({ model }) => model.publicModelId),
+      )
+    : [];
+
+  const updated = await llmGatewayPrisma.gatewayClientKey.update({
+    where: { id: keyId },
+    data: {
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.ownerLabel !== undefined && { ownerLabel: input.ownerLabel }),
+      ...(input.ownerEmail !== undefined && {
+        ownerEmail: input.ownerEmail || null,
+      }),
+      ...(input.enabled !== undefined && { enabled: input.enabled }),
+      ...(input.testing !== undefined && { testing: input.testing }),
+      ...(input.expiresInDays !== undefined && {
+        expiresAt: input.expiresInDays
+          ? new Date(Date.now() + input.expiresInDays * DAY_MS)
+          : null,
+      }),
+      ...(input.maxConcurrency !== undefined && {
+        maxConcurrency: input.maxConcurrency,
+      }),
+      ...(input.dailyRequestCap !== undefined && {
+        dailyRequestCap: input.dailyRequestCap,
+      }),
+      ...(input.dailyInputTokenCap !== undefined && {
+        dailyInputTokenCap: input.dailyInputTokenCap,
+      }),
+      ...(input.dailyOutputTokenCap !== undefined && {
+        dailyOutputTokenCap: input.dailyOutputTokenCap,
+      }),
+      ...(modelsChanged && {
+        allowAllModels,
+        allowedModels: {
+          deleteMany: {},
+          create: models.map((model) => ({ modelId: model.id })),
+        },
+      }),
+    },
+    include: includeModels,
+  });
+
+  return toRow(updated);
 };
 
 export const revokeGatewayClientKey = async (
@@ -205,6 +307,8 @@ export interface GatewayClientPrincipal {
   name: string;
   allowAllModels: boolean;
   allowedModelIds: Set<string>;
+  /** Requests are logged but hidden from dashboards and usage totals. */
+  testing: boolean;
   maxConcurrency: number | null;
   dailyRequestCap: number | null;
   dailyInputTokenCap: bigint | null;
@@ -262,6 +366,7 @@ export const authenticateGatewayClientKey = async (
     allowedModelIds: new Set(
       key.allowedModels.map(({ model }) => model.publicModelId),
     ),
+    testing: key.testing,
     maxConcurrency: key.maxConcurrency,
     dailyRequestCap: key.dailyRequestCap,
     dailyInputTokenCap: key.dailyInputTokenCap,

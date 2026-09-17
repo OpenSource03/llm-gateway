@@ -193,6 +193,7 @@ export const proxyCodexSearchRequest = async (input: {
         sessionHash: sessionId ? hmacGatewaySession(sessionId) : null,
         outcome: "started",
         streamed: false,
+        testing: input.principal.testing,
       },
       select: { id: true },
     });

@@ -5,6 +5,11 @@ Versioning after the initial 0.x compatibility period.
 
 ## 0.2.3
 
+- Client keys can be edited (name, owner, enablement, model grants, limits,
+  expiry) through `PATCH /admin/v1/client-keys/{id}`; the secret never changes.
+- Client keys can be marked as testing. Their requests are still logged for
+  debugging but are excluded from request history and usage aggregates unless
+  `include_testing=true` is passed.
 - Bridge: strip the SDK subprocess's own `# Environment` system-reminder (the
   one naming this container) before requests reach Anthropic. A loopback
   rewrite listener inside the bridge forwards everything else byte for byte:

@@ -139,6 +139,12 @@ export const GATEWAY_AUDIT_ROUTE_PATTERNS: GatewayAuditRoutePattern[] = [
   ),
   p(["POST"], /^\/client-keys$/, "llm-gateway.client-key.create", "client-key"),
   p(
+    ["PATCH"],
+    /^\/client-keys\/(?<id>[^/]+)$/,
+    "llm-gateway.client-key.update",
+    "client-key",
+  ),
+  p(
     ["DELETE"],
     /^\/client-keys\/(?<id>[^/]+)$/,
     "llm-gateway.client-key.revoke",

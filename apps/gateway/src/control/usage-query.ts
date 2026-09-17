@@ -13,6 +13,10 @@ export const usageQuery = z
     account_id: z.string().uuid().optional(),
     model: z.string().min(1).max(200).optional(),
     client_key_id: z.string().uuid().optional(),
+    include_testing: z
+      .enum(["true", "false"])
+      .transform((value) => value === "true")
+      .optional(),
   })
   .transform((query) => {
     const to = query.to ? new Date(query.to) : new Date();

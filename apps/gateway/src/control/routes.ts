@@ -6,6 +6,7 @@ import {
   completeOAuthSchema,
   createOAuthTokenSchema,
   createClientKeySchema,
+  updateClientKeySchema,
   controlOpenApiDocument,
   createControlKeySchema,
   createRoutingPoolSchema,
@@ -42,6 +43,7 @@ import {
   createGatewayClientKey,
   listGatewayClientKeys,
   revokeGatewayClientKey,
+  updateGatewayClientKey,
 } from "./client-keys.service";
 import {
   listGatewayModels,
@@ -107,6 +109,10 @@ const historyQuery = z.object({
   model: z.string().max(200).optional(),
   outcome: z.string().max(80).optional(),
   client_key_id: z.string().uuid().optional(),
+  include_testing: z
+    .enum(["true", "false"])
+    .transform((value) => value === "true")
+    .optional(),
 });
 const auditQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -480,10 +486,37 @@ app.post(
           dailyRequestCap: body.daily_request_cap,
           dailyInputTokenCap: toBigIntCap(body.daily_input_token_cap),
           dailyOutputTokenCap: toBigIntCap(body.daily_output_token_cap),
+          testing: body.testing,
         }),
       },
       201,
     );
+  },
+);
+app.patch(
+  "/client-keys/:id",
+  zValidator("param", idParams),
+  zValidator("json", updateClientKeySchema),
+  async (c) => {
+    const body = c.req.valid("json");
+
+    return c.json({
+      success: true,
+      data: await updateGatewayClientKey(c.req.valid("param").id, {
+        name: body.name,
+        ownerLabel: body.owner_label,
+        ownerEmail: body.owner_email,
+        enabled: body.enabled,
+        allowAllModels: body.allow_all_models,
+        allowedModelIds: body.allowed_model_ids,
+        expiresInDays: body.expires_in_days,
+        maxConcurrency: body.max_concurrency,
+        dailyRequestCap: body.daily_request_cap,
+        dailyInputTokenCap: toBigIntCap(body.daily_input_token_cap),
+        dailyOutputTokenCap: toBigIntCap(body.daily_output_token_cap),
+        testing: body.testing,
+      }),
+    });
   },
 );
 app.delete("/client-keys/:id", zValidator("param", idParams), async (c) =>
@@ -512,6 +545,7 @@ app.get("/requests", zValidator("query", historyQuery), async (c) => {
     model: query.model,
     outcome: query.outcome,
     clientKeyId: query.client_key_id,
+    includeTesting: query.include_testing,
   });
 
   return c.json({

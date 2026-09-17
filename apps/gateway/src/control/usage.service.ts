@@ -54,6 +54,8 @@ export const getGatewayUsage = async (
     conditions.push(Prisma.sql`"publicModelId" = ${query.model}`);
   if (query.client_key_id)
     conditions.push(Prisma.sql`"clientKeyId" = ${query.client_key_id}`);
+  // Testing keys are logged but never counted unless explicitly requested.
+  if (!query.include_testing) conditions.push(Prisma.sql`testing = false`);
   return llmGatewayPrisma.$transaction(
     async (tx) => {
       await tx.$queryRaw`SELECT set_config('statement_timeout', '10000', true)`;

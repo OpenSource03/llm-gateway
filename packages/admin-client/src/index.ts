@@ -3,6 +3,7 @@ import type {
   ApiEnvelope,
   ApiPage,
   CreateClientKeyInput,
+  UpdateClientKeyInput,
   CreateControlKeyInput,
   CreateRoutingMemberInput,
   CreateRoutingPoolInput,
@@ -427,6 +428,17 @@ export class GatewayAdminClient {
       await this.#request<ApiEnvelope<GatewayClientKey>>(
         `/client-keys/${pathPart(id)}`,
         { method: "DELETE" },
+      )
+    ).data;
+
+  updateClientKey = async (
+    id: string,
+    input: UpdateClientKeyInput,
+  ): Promise<GatewayClientKey> =>
+    (
+      await this.#request<ApiEnvelope<GatewayClientKey>>(
+        `/client-keys/${pathPart(id)}`,
+        { method: "PATCH", body: JSON.stringify(input) },
       )
     ).data;
 

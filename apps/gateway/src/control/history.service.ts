@@ -8,6 +8,7 @@ export interface GatewayRequestHistoryFilters {
   model?: string;
   outcome?: string;
   clientKeyId?: string;
+  includeTesting?: boolean;
 }
 
 export const listGatewayRequestHistory = async (
@@ -18,6 +19,7 @@ export const listGatewayRequestHistory = async (
     ...(filters.model && { publicModelId: filters.model }),
     ...(filters.outcome && { outcome: filters.outcome }),
     ...(filters.clientKeyId && { clientKeyId: filters.clientKeyId }),
+    ...(!filters.includeTesting && { testing: false }),
   };
   const [rows, total] = await Promise.all([
     llmGatewayPrisma.gatewayRequestLog.findMany({
@@ -32,6 +34,7 @@ export const listGatewayRequestHistory = async (
   return {
     rows: rows.map((row) => ({
       id: row.id,
+      testing: row.testing,
       clientKeyId: row.clientKeyId,
       accountId: row.accountId,
       provider: row.provider,

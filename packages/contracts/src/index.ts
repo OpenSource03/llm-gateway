@@ -142,8 +142,31 @@ export const createClientKeySchema = z
     daily_request_cap: optionalIntegerCap,
     daily_input_token_cap: optionalBigCap,
     daily_output_token_cap: optionalBigCap,
+    testing: z.boolean().default(false),
   })
   .strict();
+
+export const updateClientKeySchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    owner_label: z.string().trim().min(1).max(120).optional(),
+    owner_email: z.string().email().nullish(),
+    enabled: z.boolean().optional(),
+    allow_all_models: z.boolean().optional(),
+    allowed_model_ids: z
+      .array(z.string().min(1).max(1_024))
+      .max(500)
+      .optional(),
+    /** Days from now; null removes the expiry. */
+    expires_in_days: z.number().int().min(1).max(730).nullish(),
+    max_concurrency: z.number().int().min(1).max(100).nullish(),
+    daily_request_cap: optionalIntegerCap,
+    daily_input_token_cap: optionalBigCap,
+    daily_output_token_cap: optionalBigCap,
+    testing: z.boolean().optional(),
+  })
+  .strict()
+  .refine((body) => Object.keys(body).length > 0, "Provide at least one field");
 
 export const createControlKeySchema = z
   .object({
@@ -210,6 +233,7 @@ export type UpdateRoutingMemberInput = z.infer<
   typeof updateRoutingMemberSchema
 >;
 export type CreateClientKeyInput = z.infer<typeof createClientKeySchema>;
+export type UpdateClientKeyInput = z.infer<typeof updateClientKeySchema>;
 export type CreateControlKeyInput = z.infer<typeof createControlKeySchema>;
 export type StartOAuthInput = z.infer<typeof startOAuthSchema>;
 export type CompleteOAuthInput = z.infer<typeof completeOAuthSchema>;
@@ -367,6 +391,8 @@ export interface GatewayClientKey {
   status: "active" | "disabled" | "expired" | "revoked";
   allowAllModels: boolean;
   allowedModelIds: string[];
+  /** Requests are logged but hidden from history and usage by default. */
+  testing: boolean;
   maxConcurrency: number | null;
   dailyRequestCap: number | null;
   dailyInputTokenCap: string | null;
@@ -403,6 +429,7 @@ export interface GatewayRequestRow {
   outcomeExplanation?: string | null;
   tokenUsageExplanation?: string;
   id: string;
+  testing?: boolean;
   clientKeyId: string;
   clientKeyName?: string | null;
   accountId: string | null;
@@ -543,6 +570,7 @@ export const controlOpenApiDocument = {
       CreateRoutingMember: z.toJSONSchema(routingMemberFieldsSchema),
       UpdateRoutingMember: z.toJSONSchema(updateRoutingMemberSchema),
       CreateClientKey: z.toJSONSchema(createClientKeySchema),
+      UpdateClientKey: z.toJSONSchema(updateClientKeySchema),
       CreateControlKey: z.toJSONSchema(createControlKeySchema),
     },
   },
@@ -707,6 +735,12 @@ export const controlOpenApiDocument = {
       ),
     },
     "/client-keys/{id}": {
+      patch: operation(
+        "Update data-plane client key",
+        "client-keys:write",
+        "UpdateClientKey",
+        { parameters: [pathParameter("id")] },
+      ),
       delete: operation(
         "Revoke data-plane client key",
         "client-keys:write",
@@ -746,6 +780,7 @@ export const controlOpenApiDocument = {
             queryParameter("account_id", { type: "string", format: "uuid" }),
             queryParameter("model", { type: "string" }),
             queryParameter("client_key_id", { type: "string", format: "uuid" }),
+            queryParameter("include_testing", { type: "boolean" }),
           ],
         },
       ),
@@ -767,6 +802,7 @@ export const controlOpenApiDocument = {
             type: "string",
             format: "uuid",
           }),
+          queryParameter("include_testing", { type: "boolean" }),
         ],
       }),
     },

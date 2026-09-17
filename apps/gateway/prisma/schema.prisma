@@ -306,6 +306,8 @@ model GatewayClientKey {
   keyPrefix           String
   enabled             Boolean   @default(true)
   allowAllModels      Boolean   @default(false)
+  /// Testing keys are hidden from history and usage dashboards by default.
+  testing             Boolean   @default(false)
   maxConcurrency      Int?
   dailyRequestCap     Int?
   dailyInputTokenCap  BigInt?
@@ -402,6 +404,8 @@ model GatewayRequestLog {
   errorClass        String?
   retryCount        Int                   @default(0)
   streamed          Boolean               @default(false)
+  /// Copied from the client key at request time so dashboards can exclude it.
+  testing           Boolean               @default(false)
   latencyMs         Int?
   inputTokens       BigInt?
   outputTokens      BigInt?
@@ -409,7 +413,7 @@ model GatewayRequestLog {
   startedAt         DateTime              @default(now())
   completedAt       DateTime?
 
-  @@index([startedAt])
+  @@index([testing, startedAt])
   @@index([clientKeyId, startedAt])
   @@index([accountId, startedAt])
   @@index([publicModelId, startedAt])
