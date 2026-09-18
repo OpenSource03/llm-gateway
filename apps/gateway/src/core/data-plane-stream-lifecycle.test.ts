@@ -280,6 +280,9 @@ test("downstream cancel before a terminal event finalizes as an error", async ()
 
 test("responses accounting counts cache writes as cached input", async () => {
   let observed: { input?: number; output?: number; cached?: number } = {};
+  let diagnostics:
+    | { cacheReadInputTokens?: number; cacheWriteInputTokens?: number }
+    | undefined;
   const response = wrapStreamLifecycle(
     new Response(
       new ReadableStream<Uint8Array>({
@@ -295,8 +298,9 @@ test("responses accounting counts cache writes as cached input", async () => {
       { headers: { "content-type": "text/event-stream" } },
     ),
     [lease],
-    async (_error, usage) => {
+    async (_error, usage, streamDiagnostics) => {
       observed = usage;
+      diagnostics = streamDiagnostics;
     },
     {
       dependencies: {
@@ -310,6 +314,8 @@ test("responses accounting counts cache writes as cached input", async () => {
 
   await response.text();
   assert.deepEqual(observed, { input: 3, output: 7, cached: 150 });
+  assert.equal(diagnostics?.cacheReadInputTokens, 100);
+  assert.equal(diagnostics?.cacheWriteInputTokens, 50);
 });
 
 test("downstream cancel after a terminal event finalizes as success", async () => {

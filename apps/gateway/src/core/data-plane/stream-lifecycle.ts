@@ -33,6 +33,9 @@ export interface StreamDiagnostics {
   chunks: number;
   bytes: number;
   terminalReceived: boolean;
+  /** Provider-reported split of cached input, for diagnostics only. */
+  cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
 }
 
 /** Fixed, gateway-owned labels only: never persist a provider error name/message. */
@@ -113,6 +116,7 @@ export const wrapStreamLifecycle = (
         chunks,
         bytes,
         terminalReceived: observer.terminalReceived,
+        ...observer.cacheBreakdown,
       }),
     ]);
   };
@@ -309,6 +313,12 @@ const createAnthropicStreamObserver = () => {
 
   return {
     usage,
+    get cacheBreakdown() {
+      return {
+        cacheReadInputTokens,
+        cacheWriteInputTokens: cacheCreationInputTokens,
+      };
+    },
     get terminalReceived() {
       return terminal;
     },
@@ -348,6 +358,8 @@ const createResponsesStreamObserver = () => {
   let failed = false;
   let totalInputTokens: number | undefined;
   let cachedInputTokens: number | undefined;
+  let cacheReadTokens: number | undefined;
+  let cacheWriteTokens: number | undefined;
   const usage: ObservedUsage = {};
   const processFrame = (raw: string) => {
     const data = raw
@@ -374,7 +386,13 @@ const createResponsesStreamObserver = () => {
         totalInputTokens = current.input_tokens;
       if (typeof current?.output_tokens === "number")
         usage.output = current.output_tokens;
-      const cached = responsesCachedInputTokens(current?.input_tokens_details);
+      const details = current?.input_tokens_details;
+      const cached = responsesCachedInputTokens(details);
+
+      if (typeof details?.cached_tokens === "number")
+        cacheReadTokens = details.cached_tokens;
+      if (typeof details?.cache_write_tokens === "number")
+        cacheWriteTokens = details.cache_write_tokens;
 
       if (cached !== undefined) {
         cachedInputTokens = cached;
@@ -409,6 +427,12 @@ const createResponsesStreamObserver = () => {
 
   return {
     usage,
+    get cacheBreakdown() {
+      return {
+        cacheReadInputTokens: cacheReadTokens,
+        cacheWriteInputTokens: cacheWriteTokens,
+      };
+    },
     get terminalReceived() {
       return terminal;
     },

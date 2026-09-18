@@ -45,8 +45,22 @@ export function patchSessionDiagnostics(source) {
     'if (refusal === "missing-message" || sawUnresumableRefusal) {\n                        gwRejectResumeFallback(requestMeta.requestId, refusal);',
     2,
   );
+  // Continuity and cache diagnostics: why a turn replayed instead of resuming,
+  // which lineage it took, and its cache reads versus writes.
+  replace(
+    'claudeLog("passthrough.checkpoint_replay", {\n              expectedToolIds: passthroughToolCallIds?.length ?? 0,',
+    'claudeLog("passthrough.checkpoint_replay", {\n              lineage: lineageType,\n              receivedToolResults: gwCountToolResults(messagesToConvert),\n              expectedToolIds: passthroughToolCallIds?.length ?? 0,',
+  );
+  replace(
+    'claudeLog("request.received", {\n          model,',
+    'claudeLog("request.received", {\n          lineage: lineageType,\n          model,',
+  );
+  replace(
+    "function logUsage(requestId, usage) {\n  plog(`[PROXY] ${requestId} usage: ${formatUsageSummary(usage)}`);",
+    "function logUsage(requestId, usage) {\n  gwLogUsage(requestId, usage);\n  plog(`[PROXY] ${requestId} usage: ${formatUsageSummary(usage)}`);",
+  );
   return (
-    'import { validateCheckpoint as gwValidateCheckpoint, requireStorage as gwRequireStorage, observeStderr as gwObserveStderr, rejectResumeFallback as gwRejectResumeFallback, startStorageMonitor as gwStartStorageMonitor } from "./gateway-session-diagnostics.mjs";\ngwStartStorageMonitor();\n' +
+    'import { validateCheckpoint as gwValidateCheckpoint, requireStorage as gwRequireStorage, observeStderr as gwObserveStderr, rejectResumeFallback as gwRejectResumeFallback, startStorageMonitor as gwStartStorageMonitor, countToolResults as gwCountToolResults, logUsage as gwLogUsage } from "./gateway-session-diagnostics.mjs";\ngwStartStorageMonitor();\n' +
     source
   );
 }
