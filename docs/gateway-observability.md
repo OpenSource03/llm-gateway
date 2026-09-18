@@ -68,6 +68,8 @@ rather than a blank editor.
 | Errors and failures              | All warnings and errors across the deployed apps                  |
 | HTTP summary                     | Volume, status mix, dispatch latency per route                    |
 | Ingestion volume                 | Cost and cap headroom                                             |
+| Prompt cache reads vs writes     | Whether turns re-read cached history or re-wrote it at full price |
+| Bridge rebuild rate              | Share of turns that replayed history despite a known session      |
 
 The lineage field is the one that answers "did it lose context":
 
@@ -92,6 +94,39 @@ A `lineage=new` with a small `msgCount` is an ordinary new conversation, and
 every bridge restart produces one per active thread, because sessions live in
 the container's ephemeral `/tmp`.
 
+`continuation` alone does not prove the turn was cheap. When the tool results a
+client sends back do not match the tool calls the bridge recorded, the bridge
+logs `transport.passthrough.checkpoint_replay` and rebuilds the whole history
+in a fresh session, which re-writes it into the prompt cache at full price.
+The event carries `lineage`, `expectedToolIds`, `receivedToolResults` and
+`reason`. `receivedToolResults` greater than `expectedToolIds` means the turn
+reached a bridge instance holding stale session state: the bridge must run as
+a single instance.
+
+### Prompt cache and rebuilds
+
+Each bridge turn emits `transport.request.usage`, and the gateway's
+`Gateway stream finalized` / `Gateway response finalized` records carry the
+same split as `cacheReadInputTokens` and `cacheWriteInputTokens`. Healthy
+agent turns read almost everything and write only the new tail:
+
+    AppServiceConsoleLogs
+    | where ResultDescription has "transport.request.usage"
+    | extend d = parse_json(ResultDescription)
+    | summarize cacheRead = sum(tolong(d.cacheReadInputTokens)),
+                cacheWrite = sum(tolong(d.cacheCreationInputTokens))
+        by bin(TimeGenerated, 1h)
+
+Rebuild rate, and how many bridge instances served traffic:
+
+    AppServiceConsoleLogs
+    | where ResultDescription has_any ("transport.request.received", "transport.passthrough.checkpoint_replay")
+    | summarize requests = countif(ResultDescription has "transport.request.received"),
+                rebuilds = countif(ResultDescription has "checkpoint_replay"),
+                instances = dcount(Host)
+        by bin(TimeGenerated, 1h)
+    | extend rebuildPct = round(100.0 * rebuilds / requests, 1)
+
 ## Alerting
 
 Alert on the bridge reporting a rejected checkpoint, blocked replay, or storage
@@ -105,8 +140,17 @@ normal operation:
     | where event in ("checkpoint.rejected", "session.replay_blocked", "storage.rejected", "storage.monitor_failed")
         or (event == "checkpoint.validated" and tobool(d.valid) == false)
 
-Fresh-replay volume is intentionally not worth an alert: deployments and
-container recycles generate it legitimately. Use the continuity query instead.
+Also alert on checkpoint rebuilds. Unlike fresh sessions after a restart, they
+only occur when a known session's state is stale or mismatched, typically a
+second bridge instance, and each one re-writes a whole history:
+
+    AppServiceConsoleLogs
+    | where ResultDescription has "transport.passthrough.checkpoint_replay"
+    | summarize rebuilds = count()
+
+Fresh-session volume (`lineage=new`) is intentionally not worth an alert:
+deployments and container recycles generate it legitimately. Use the continuity
+query instead.
 
 ## What is not logged
 

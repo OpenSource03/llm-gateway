@@ -3,6 +3,23 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.4
+
+- Codex over Claude: developer messages that arrive mid-thread (permission,
+  collaboration-mode and model-switch notices) stay at their position as
+  system reminders. Hoisted into the system prompt, resumed Agent SDK sessions
+  never showed them to the model, and direct requests lost the cached prefix.
+- Codex usage reports cache writes as `cache_write_tokens` instead of counting
+  them as cached reads, so full-price prompt rewrites are visible in Codex.
+  Gateway accounting is unchanged: cached input remains reads plus writes.
+- Bridge: must run as a single instance. Its sessions live in one container,
+  so turns reaching a second instance replayed the whole history uncached.
+  The Azure module now sets `numberOfWorkers: 1` (needs per-app scaling).
+- Diagnostics: bridge rebuilds log their lineage, expected tool calls,
+  received tool results and reason; each bridge turn logs cache reads and
+  writes; gateway finalize records carry transport, token counts and the cache
+  split, and non-streamed requests are logged too.
+
 ## 0.2.3
 
 - Client keys can be edited (name, owner, enablement, model grants, limits,
