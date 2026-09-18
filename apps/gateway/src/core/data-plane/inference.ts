@@ -764,6 +764,14 @@ const proxyGatewayRequest = async (
               inputTokens: billedInputTokens,
               outputTokens: billedOutputTokens,
               cachedInputTokens: usage.cached,
+              cacheReadInputTokens: error
+                ? null
+                : (diagnostics ?? extracted?.cacheBreakdown)
+                    ?.cacheReadInputTokens,
+              cacheWriteInputTokens: error
+                ? null
+                : (diagnostics ?? extracted?.cacheBreakdown)
+                    ?.cacheWriteInputTokens,
               completedAt: new Date(),
             },
           }),

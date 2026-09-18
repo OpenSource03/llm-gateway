@@ -107,9 +107,9 @@ test(
         account,
       );
       assert.equal(
-        (await getGatewayUsage(query, true)).accounts.find(
-          (row) => row.accountId === account,
-        )!.accountLabel,
+        (
+          await getGatewayUsage(query, { accounts: true, clientKeys: false })
+        ).accounts.find((row) => row.accountId === account)!.accountLabel,
         "Private fixture label",
       );
       assert.equal(report.accounts[0]!.accountId, other);
@@ -188,3 +188,95 @@ test("analytics inherits requests:read and denies other scopes and writes", asyn
     );
   }
 });
+
+test(
+  "usage breakdown ranks groups, merges the rest, splits cache, and never counts testing keys",
+  { skip: !database },
+  async () => {
+    process.env.GATEWAY_DATABASE_URL = database;
+    const { getLlmGatewayPrisma, closeLlmGatewayDatabase } =
+      await import("../core/db");
+    const { getGatewayUsage } = await import("./usage.service");
+    const prisma = getLlmGatewayPrisma();
+    const client = crypto.randomUUID();
+    const from = "2026-08-10T00:00:00Z",
+      to = "2026-08-13T00:00:00Z";
+    const row = (model: number, extra: object = {}) => ({
+      clientKeyId: client,
+      provider: "ANTHROPIC",
+      publicModelId: `synthetic/breakdown-${model}`,
+      startedAt: new Date("2026-08-11T05:00:00Z"),
+      outcome: "success",
+      inputTokens: BigInt(model + 1),
+      cachedInputTokens: 10n,
+      cacheReadInputTokens: 6n,
+      cacheWriteInputTokens: 4n,
+      outputTokens: 1n,
+      latencyMs: 50,
+      ...extra,
+    });
+    try {
+      await prisma.gatewayRequestLog.createMany({
+        data: [
+          ...Array.from({ length: 10 }, (_, model) => row(model)),
+          // Recorded before the split existed.
+          row(9, {
+            cachedInputTokens: 7n,
+            cacheReadInputTokens: null,
+            cacheWriteInputTokens: null,
+          }),
+          row(0, { testing: true, inputTokens: 1_000_000n }),
+        ],
+      });
+      const report = await getGatewayUsage(
+        usageQuery.parse({
+          from,
+          to,
+          client_key_id: client,
+          group_by: "model",
+        }),
+      );
+      const breakdown = report.breakdown!;
+
+      assert.equal(report.summary.requestCount, 11);
+      assert.equal(report.summary.cacheReadTokens, "60");
+      assert.equal(report.summary.cacheWriteTokens, "40");
+      assert.equal(report.summary.cacheUnsplitTokens, "7");
+      assert.equal(breakdown.groupBy, "model");
+      assert.equal(breakdown.groupCount, 10);
+      assert.equal(breakdown.groups.length, 9);
+      assert.equal(breakdown.groups[0]!.key, "synthetic/breakdown-9");
+      assert.equal(breakdown.groups[0]!.requestCount, 2);
+      assert.equal(breakdown.groups[0]!.label, "synthetic/breakdown-9");
+      const other = breakdown.groups.at(-1)!;
+      assert.equal(other.other, true);
+      assert.equal(other.label, "2 more");
+      assert.equal(other.requestCount, 2);
+      assert.equal(other.inputTokens, "3");
+      for (const group of breakdown.groups) {
+        assert.equal(group.series.length, 3);
+        assert.equal(
+          group.series.reduce((sum, bucket) => sum + bucket.requestCount, 0),
+          group.requestCount,
+        );
+      }
+      assert.equal(
+        breakdown.groups.some((group) => BigInt(group.inputTokens) > 100n),
+        false,
+      );
+      assert.equal(
+        (
+          await getGatewayUsage(
+            usageQuery.parse({ from, to, client_key_id: client }),
+          )
+        ).breakdown,
+        undefined,
+      );
+    } finally {
+      await prisma.gatewayRequestLog.deleteMany({
+        where: { clientKeyId: client },
+      });
+      await closeLlmGatewayDatabase();
+    }
+  },
+);
