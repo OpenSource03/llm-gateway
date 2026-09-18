@@ -3,6 +3,18 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.6
+
+- Request logs store the cache split (`cacheReadInputTokens`,
+  `cacheWriteInputTokens`) next to the combined cached input. Migration
+  `request_log_cache_split` adds two nullable columns; older rows keep only the
+  combined value and report it as `cacheUnsplitTokens`.
+- `GET /admin/v1/requests/usage` accepts `group_by` (`account`, `client_key`,
+  `model`, `provider`) and returns a `breakdown` with the eight largest groups,
+  each with its own series, plus one merged group for the rest. Client key names
+  need `client-keys:read`; account labels still need `accounts:read`. Testing
+  keys stay excluded.
+
 ## 0.2.5
 
 - Bridge: replace references to the container's own Claude Code session files

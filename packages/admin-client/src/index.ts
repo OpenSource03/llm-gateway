@@ -18,6 +18,7 @@ import type {
   GatewayOAuthAttempt,
   GatewayProviderAccount,
   GatewayRequestRow,
+  GatewayUsageGroupBy,
   GatewayUsageReport,
   GatewayRoutingPool,
   GatewayStatus,
@@ -473,6 +474,7 @@ export class GatewayAdminClient {
       accountId?: string;
       model?: string;
       clientKeyId?: string;
+      groupBy?: GatewayUsageGroupBy;
     } = {},
   ): Promise<GatewayUsageReport> => {
     const query = new URLSearchParams();
@@ -483,7 +485,9 @@ export class GatewayAdminClient {
             ? "account_id"
             : key === "clientKeyId"
               ? "client_key_id"
-              : key,
+              : key === "groupBy"
+                ? "group_by"
+                : key,
           value,
         );
     }

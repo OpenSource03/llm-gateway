@@ -529,10 +529,10 @@ app.delete("/client-keys/:id", zValidator("param", idParams), async (c) =>
 app.get("/requests/usage", zValidator("query", usageQuery), async (c) =>
   c.json({
     success: true,
-    data: await getGatewayUsage(
-      c.req.valid("query"),
-      c.get("controlPrincipal").scopes.has("accounts:read"),
-    ),
+    data: await getGatewayUsage(c.req.valid("query"), {
+      accounts: c.get("controlPrincipal").scopes.has("accounts:read"),
+      clientKeys: c.get("controlPrincipal").scopes.has("client-keys:read"),
+    }),
   }),
 );
 

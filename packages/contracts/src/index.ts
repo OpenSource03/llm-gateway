@@ -839,17 +839,37 @@ export interface GatewayUsageMetrics {
   unknownUsageCount: number;
   inputTokens: string;
   cachedInputTokens: string;
+  /** Split of cachedInputTokens; rows recorded before the split are in cacheUnsplitTokens. */
+  cacheReadTokens: string;
+  cacheWriteTokens: string;
+  cacheUnsplitTokens: string;
   outputTokens: string;
   totalTokens: string;
   reservedTokens: string;
   averageLatencyMs: number | null;
+}
+export type GatewayUsageGroupBy =
+  "account" | "client_key" | "model" | "provider";
+export type GatewayUsageBucket = GatewayUsageMetrics & { bucket: string };
+export interface GatewayUsageGroup extends GatewayUsageMetrics {
+  /** Null for requests without a value (for example no routed account). */
+  key: string | null;
+  label: string;
+  /** Aggregate of every group beyond the ranked ones. */
+  other: boolean;
+  series: GatewayUsageBucket[];
+}
+export interface GatewayUsageBreakdown {
+  groupBy: GatewayUsageGroupBy;
+  groupCount: number;
+  groups: GatewayUsageGroup[];
 }
 export interface GatewayUsageReport {
   from: string;
   to: string;
   interval: "hour" | "day";
   summary: GatewayUsageMetrics;
-  series: Array<GatewayUsageMetrics & { bucket: string }>;
+  series: GatewayUsageBucket[];
   accounts: Array<
     GatewayUsageMetrics & {
       accountId: string | null;
@@ -858,4 +878,5 @@ export interface GatewayUsageReport {
     }
   >;
   accountCount: number;
+  breakdown?: GatewayUsageBreakdown;
 }

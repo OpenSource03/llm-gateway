@@ -110,18 +110,18 @@ model GatewayProviderAccount {
 
 /// Durable probe budgets survive failures and restarts; contains structural metrics only.
 model GatewayTokenProbe {
-  accountId    String
-  kind         String
-  attemptCount Int @default(0)
-  inputTokensTotal BigInt @default(0)
-  outputTokensTotal BigInt @default(0)
-  unknownUsageCount Int @default(0)
-  attemptedAt  DateTime
-  modelId      String
-  statusCode   Int?
-  inputTokens  BigInt?
-  outputTokens BigInt?
-  account      GatewayProviderAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId         String
+  kind              String
+  attemptCount      Int                    @default(0)
+  inputTokensTotal  BigInt                 @default(0)
+  outputTokensTotal BigInt                 @default(0)
+  unknownUsageCount Int                    @default(0)
+  attemptedAt       DateTime
+  modelId           String
+  statusCode        Int?
+  inputTokens       BigInt?
+  outputTokens      BigInt?
+  account           GatewayProviderAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@id([accountId, kind])
 }
@@ -184,24 +184,24 @@ model GatewayOAuthAttempt {
 /// Canonical public model catalog. A public model ID is provider-qualified;
 /// aliases are separate records so changing an alias never changes history.
 model GatewayModel {
-  id              String          @id @default(uuid())
+  id              String    @id @default(uuid())
   provider        String
   upstreamModelId String
-  publicModelId   String          @unique
+  publicModelId   String    @unique
   displayName     String
   description     String?
   contextWindow   Int?
   maxOutputTokens Int?
   capabilities    Json
-  enabled         Boolean         @default(true)
+  enabled         Boolean   @default(true)
   catalogSource   String
   catalogVersion  String?
-  discoveredAt    DateTime        @default(now())
-  lastSeenAt      DateTime        @default(now())
+  discoveredAt    DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
   staleAfter      DateTime?
   routingPoolId   String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   routingPool    GatewayRoutingPool?     @relation(fields: [routingPoolId], references: [id], onDelete: SetNull)
   aliases        GatewayModelAlias[]
@@ -341,16 +341,16 @@ model GatewayClientKeyModel {
 /// Cache-aware sticky assignment. `sessionHash` is an HMAC, never the raw
 /// X-Claude-Code-Session-Id value.
 model GatewaySessionRoute {
-  id                    String   @id @default(uuid())
-  clientKeyId           String
-  sessionHash           String
-  modelId               String
-  routingPoolId         String
-  accountId             String
-  lastUsedAt            DateTime @default(now())
-  expiresAt             DateTime
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id            String   @id @default(uuid())
+  clientKeyId   String
+  sessionHash   String
+  modelId       String
+  routingPoolId String
+  accountId     String
+  lastUsedAt    DateTime @default(now())
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   clientKey   GatewayClientKey       @relation(fields: [clientKeyId], references: [id], onDelete: Cascade)
   model       GatewayModel           @relation(fields: [modelId], references: [id], onDelete: Cascade)
@@ -391,27 +391,30 @@ model GatewayQuotaSnapshot {
 /// keys so 90-day history survives account/key/model deletion. No prompt,
 /// output, tool argument/result, image, token, or raw header belongs here.
 model GatewayRequestLog {
-  id                String                @id @default(uuid())
-  clientKeyId       String
-  accountId         String?
-  provider          String?
-  publicModelId     String
-  upstreamModelId   String?
-  routingPolicy     GatewayRoutingPolicy?
-  sessionHash       String?
-  statusCode        Int?
-  outcome           String
-  errorClass        String?
-  retryCount        Int                   @default(0)
-  streamed          Boolean               @default(false)
+  id                    String                @id @default(uuid())
+  clientKeyId           String
+  accountId             String?
+  provider              String?
+  publicModelId         String
+  upstreamModelId       String?
+  routingPolicy         GatewayRoutingPolicy?
+  sessionHash           String?
+  statusCode            Int?
+  outcome               String
+  errorClass            String?
+  retryCount            Int                   @default(0)
+  streamed              Boolean               @default(false)
   /// Copied from the client key at request time so dashboards can exclude it.
-  testing           Boolean               @default(false)
-  latencyMs         Int?
-  inputTokens       BigInt?
-  outputTokens      BigInt?
-  cachedInputTokens BigInt?
-  startedAt         DateTime              @default(now())
-  completedAt       DateTime?
+  testing               Boolean               @default(false)
+  latencyMs             Int?
+  inputTokens           BigInt?
+  outputTokens          BigInt?
+  cachedInputTokens     BigInt?
+  /// Split of cachedInputTokens when the provider reports it; null on older rows.
+  cacheReadInputTokens  BigInt?
+  cacheWriteInputTokens BigInt?
+  startedAt             DateTime              @default(now())
+  completedAt           DateTime?
 
   @@index([testing, startedAt])
   @@index([clientKeyId, startedAt])
