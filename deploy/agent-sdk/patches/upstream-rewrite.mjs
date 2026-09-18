@@ -67,7 +67,7 @@ const bridgePathPattern = (cwd) =>
   new RegExp(
     String.raw`/tmp/claude-\d+/` +
       cwd.replace(/[^A-Za-z0-9]/g, "-").replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
-      String.raw`/[^\s"'\x60\])>}]*`,
+      String.raw`/[^\s"'\x60\])<>}]*`,
     "g",
   );
 

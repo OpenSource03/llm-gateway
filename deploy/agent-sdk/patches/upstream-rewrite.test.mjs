@@ -273,4 +273,15 @@ test("scrubs bridge paths from replayed tool calls and keeps closing braces", ()
   assert.equal(body.messages[0].content[0].input.env, call.input.env);
   assert.equal(body.messages[0].content[0].id, "t9");
   assert.equal(body.messages[1].content, `open ${BRIDGE_PATH_PLACEHOLDER}}`);
+  assert.equal(
+    neutralizeBridgePaths(
+      {
+        messages: [
+          { role: "user", content: `<img>${session}/images/1.png</img>` },
+        ],
+      },
+      "/opt/meridian",
+    ).body.messages[0].content,
+    `<img>${BRIDGE_PATH_PLACEHOLDER}</img>`,
+  );
 });
