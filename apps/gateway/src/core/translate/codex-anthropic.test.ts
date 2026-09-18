@@ -435,3 +435,152 @@ test("Responses without thinking omit the thinking-clear edit rejected by Claude
   assert.equal(converted.request.thinking, undefined);
   assert.equal(converted.request.context_management, undefined);
 });
+
+test("Claude SSE reports cache writes separately from cache reads", async () => {
+  const upstream = streamFromStrings([
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_claude","usage":{"input_tokens":3,"cache_read_input_tokens":100,"cache_creation_input_tokens":50}}}\n\n',
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}\n\n',
+    'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+  ]);
+  const translated = anthropicSseToCodexResponses(upstream, {
+    publicModel: "anthropic/claude-opus-5",
+    toolIdentities: new Map(),
+  });
+  let usage: Record<string, unknown> | undefined;
+
+  for await (const frame of parseSseStream(translated)) {
+    if (frame.event === "response.completed") {
+      usage = (JSON.parse(frame.data) as { response: { usage: typeof usage } })
+        .response.usage;
+    }
+  }
+  assert.deepEqual(usage, {
+    input_tokens: 153,
+    input_tokens_details: { cached_tokens: 100, cache_write_tokens: 50 },
+    output_tokens: 7,
+    output_tokens_details: null,
+    total_tokens: 160,
+  });
+});
+
+const codexTurn = (
+  input: Array<Record<string, unknown>>,
+): Parameters<typeof codexToAnthropic>[0] => ({
+  model: "anthropic/claude-opus-5",
+  instructions: "Base instructions",
+  input: [
+    {
+      type: "message",
+      role: "developer",
+      content: [{ type: "input_text", text: "Initial developer context" }],
+    },
+    ...input,
+  ],
+  tool_choice: "auto",
+  parallel_tool_calls: true,
+  store: false,
+  stream: true,
+  include: [],
+});
+
+test("Claude translation keeps mid-thread developer messages out of the system prefix", () => {
+  const opening = [
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "Start" }],
+    },
+    {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "Working" }],
+    },
+  ];
+  const before = codexToAnthropic(codexTurn([...opening]), {
+    model: "claude-opus-5",
+    maxOutputTokens: 1_000,
+  });
+  const after = codexToAnthropic(
+    codexTurn([
+      ...opening,
+      {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text: "<model_switch>Now Opus" }],
+      },
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Continue" }],
+      },
+    ]),
+    { model: "claude-opus-5", maxOutputTokens: 1_000 },
+  );
+
+  assert.deepEqual(after.request.system, before.request.system);
+  assert.deepEqual(after.request.messages.slice(0, 2), [
+    { role: "user", content: [{ type: "text", text: "Start" }] },
+    { role: "assistant", content: [{ type: "text", text: "Working" }] },
+  ]);
+  assert.deepEqual(after.request.messages[2], {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: "<system-reminder>\n<model_switch>Now Opus\n</system-reminder>",
+      },
+      { type: "text", text: "Continue" },
+    ],
+  });
+});
+
+test("Claude translation places mid-thread developer messages after pending tool results", () => {
+  const converted = codexToAnthropic(
+    codexTurn([
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Read two files" }],
+      },
+      {
+        type: "function_call",
+        name: "read_file",
+        call_id: "call_a",
+        arguments: "{}",
+      },
+      {
+        type: "function_call",
+        name: "read_file",
+        call_id: "call_b",
+        arguments: "{}",
+      },
+      {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text: "<collaboration_mode>plan" }],
+      },
+      { type: "function_call_output", call_id: "call_a", output: "a" },
+      { type: "function_call_output", call_id: "call_b", output: "b" },
+    ]),
+    { model: "claude-opus-5", maxOutputTokens: 1_000 },
+  );
+
+  assert.deepEqual(converted.request.system, [
+    {
+      type: "text",
+      text: "Base instructions\n\nInitial developer context",
+      cache_control: { type: "ephemeral" },
+    },
+  ]);
+  assert.deepEqual(converted.request.messages.at(-1), {
+    role: "user",
+    content: [
+      { type: "tool_result", tool_use_id: "call_a", content: "a" },
+      { type: "tool_result", tool_use_id: "call_b", content: "b" },
+      {
+        type: "text",
+        text: "<system-reminder>\n<collaboration_mode>plan\n</system-reminder>",
+      },
+    ],
+  });
+});

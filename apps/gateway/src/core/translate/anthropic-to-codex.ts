@@ -109,7 +109,8 @@ async function* translateFrames(
   let created = false;
   let inputTokens = 0;
   let outputTokens = 0;
-  let cachedTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
   let stopReason: string | null = null;
   const blocks = new Map<number, ActiveBlock>();
   // Stream text immediately, but do not finalize its phase until the provider
@@ -170,9 +171,8 @@ async function* translateFrames(
         const usage = record(message?.usage);
 
         inputTokens = finiteUsage(usage?.input_tokens);
-        cachedTokens =
-          finiteUsage(usage?.cache_read_input_tokens) +
-          finiteUsage(usage?.cache_creation_input_tokens);
+        cacheReadTokens = finiteUsage(usage?.cache_read_input_tokens);
+        cacheWriteTokens = finiteUsage(usage?.cache_creation_input_tokens);
         for (const chunk of ensureCreated()) yield chunk;
         continue;
       }
@@ -284,11 +284,17 @@ async function* translateFrames(
             output: [],
             end_turn: stopReason === "end_turn",
             usage: {
-              input_tokens: inputTokens + cachedTokens,
-              input_tokens_details: { cached_tokens: cachedTokens },
+              input_tokens: inputTokens + cacheReadTokens + cacheWriteTokens,
+              // Codex reads cache writes separately; reporting them as cached
+              // hid full-price prompt rewrites behind a ~100% cache figure.
+              input_tokens_details: {
+                cached_tokens: cacheReadTokens,
+                cache_write_tokens: cacheWriteTokens,
+              },
               output_tokens: outputTokens,
               output_tokens_details: null,
-              total_tokens: inputTokens + cachedTokens + outputTokens,
+              total_tokens:
+                inputTokens + cacheReadTokens + cacheWriteTokens + outputTokens,
             },
           },
         });

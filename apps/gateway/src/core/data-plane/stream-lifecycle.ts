@@ -10,6 +10,7 @@ import {
   combinedCachedInputTokens,
   uncachedResponsesInputTokens,
 } from "../usage-accounting";
+import type { ResponsesUsage } from "../wire/responses";
 import { withSseKeepalive } from "../wire/sse-keepalive";
 
 const LEASE_TTL_MS = 120_000;
@@ -327,6 +328,19 @@ const createAnthropicStreamObserver = () => {
   };
 };
 
+type ResponsesInputTokensDetails = NonNullable<
+  ResponsesUsage["input_tokens_details"]
+>;
+
+// Cached input is accounted as cache reads plus cache writes on every protocol.
+const responsesCachedInputTokens = (
+  details: ResponsesInputTokensDetails | undefined,
+): number | undefined =>
+  combinedCachedInputTokens(
+    details?.cached_tokens,
+    details?.cache_write_tokens,
+  );
+
 const createResponsesStreamObserver = () => {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -350,7 +364,7 @@ const createResponsesStreamObserver = () => {
           usage?: {
             input_tokens?: number;
             output_tokens?: number;
-            input_tokens_details?: { cached_tokens?: number };
+            input_tokens_details?: ResponsesInputTokensDetails;
           };
         };
       };
@@ -360,8 +374,10 @@ const createResponsesStreamObserver = () => {
         totalInputTokens = current.input_tokens;
       if (typeof current?.output_tokens === "number")
         usage.output = current.output_tokens;
-      if (typeof current?.input_tokens_details?.cached_tokens === "number") {
-        cachedInputTokens = current.input_tokens_details.cached_tokens;
+      const cached = responsesCachedInputTokens(current?.input_tokens_details);
+
+      if (cached !== undefined) {
+        cachedInputTokens = cached;
         usage.cached = cachedInputTokens;
       }
       usage.input = uncachedResponsesInputTokens(
@@ -425,12 +441,14 @@ export const extractResponseUsage = async (
         output_tokens?: number;
         cache_read_input_tokens?: number;
         cache_creation_input_tokens?: number;
-        input_tokens_details?: { cached_tokens?: number };
+        input_tokens_details?: ResponsesInputTokensDetails;
       };
     };
 
     if (publicProtocol === "responses") {
-      const cached = body.usage?.input_tokens_details?.cached_tokens;
+      const cached = responsesCachedInputTokens(
+        body.usage?.input_tokens_details,
+      );
 
       return {
         input: uncachedResponsesInputTokens(body.usage?.input_tokens, cached),

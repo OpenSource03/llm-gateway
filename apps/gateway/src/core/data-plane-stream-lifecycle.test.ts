@@ -278,6 +278,40 @@ test("downstream cancel before a terminal event finalizes as an error", async ()
   assert.ok(completionError instanceof Error);
 });
 
+test("responses accounting counts cache writes as cached input", async () => {
+  let observed: { input?: number; output?: number; cached?: number } = {};
+  const response = wrapStreamLifecycle(
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":153,"output_tokens":7,"input_tokens_details":{"cached_tokens":100,"cache_write_tokens":50}}}}\n\n',
+            ),
+          );
+          controller.close();
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    ),
+    [lease],
+    async (_error, usage) => {
+      observed = usage;
+    },
+    {
+      dependencies: {
+        heartbeat: async () => true,
+        release: async () => undefined,
+        heartbeatIntervalMs: 100,
+      },
+      publicProtocol: "responses",
+    },
+  );
+
+  await response.text();
+  assert.deepEqual(observed, { input: 3, output: 7, cached: 150 });
+});
+
 test("downstream cancel after a terminal event finalizes as success", async () => {
   let completionError: unknown = "not finalized";
   let observed: { input?: number; output?: number; cached?: number } = {};
