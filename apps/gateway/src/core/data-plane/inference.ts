@@ -724,8 +724,11 @@ const proxyGatewayRequest = async (
             ? error.name
             : "GatewayStreamAborted"
           : null;
-        if (diagnostics) {
-          Logger.info("Gateway stream finalized", {
+        Logger.info(
+          diagnostics
+            ? "Gateway stream finalized"
+            : "Gateway response finalized",
+          {
             requestId: requestLog.id,
             accountId: routed.accountId,
             transport: routed.transport.id,
@@ -733,13 +736,14 @@ const proxyGatewayRequest = async (
             ...diagnostics,
             inputTokens: usage.input,
             outputTokens: usage.output,
+            cachedInputTokens: usage.cached,
             inputUsageSource:
               usage.input === undefined ? "reservation" : "provider",
             outputUsageSource:
               usage.output === undefined ? "reservation" : "provider",
             latencyMs: Date.now() - startedAt.getTime(),
-          });
-        }
+          },
+        );
 
         if (routed.transport.id === "agent-sdk" && routed.transport.tokenBacked)
           await collectTokenSdkQuota(routed.accountId, model.id).catch(

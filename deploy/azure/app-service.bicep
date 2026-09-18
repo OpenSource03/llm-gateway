@@ -233,8 +233,11 @@ resource controlScmPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicie
   properties: { allow: false }
 }
 
-// Stateless private Meridian bridge. It stores no login: the gateway supplies
-// each account's current token in private requests (see deploy/agent-sdk).
+// Private Meridian bridge. It stores no login: the gateway supplies each
+// account's current token in private requests (see deploy/agent-sdk). Its
+// Claude sessions live in one container's memory and /tmp, so it must run as a
+// single instance; a second one makes turns replay whole histories uncached.
+// numberOfWorkers needs per-app scaling enabled on the shared plan.
 resource bridgeApp 'Microsoft.Web/sites@2024-11-01' = if (bridgeEnabled) {
   name: agentSdkAppName
   location: location
@@ -255,6 +258,7 @@ resource bridgeApp 'Microsoft.Web/sites@2024-11-01' = if (bridgeEnabled) {
       imagePullTraffic: vnetImagePullEnabled
     }
     siteConfig: {
+      numberOfWorkers: 1
       linuxFxVersion: 'DOCKER|${agentSdkImage}'
       appCommandLine: ''
       acrUseManagedIdentityCreds: true

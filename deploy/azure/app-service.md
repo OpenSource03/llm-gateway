@@ -111,10 +111,15 @@ It disables public network access, receives its own private endpoint and DNS
 zone group, listens on port 3456, and is health-checked on `/health`. Both
 gateway apps then receive `GATEWAY_ANTHROPIC_AGENT_SDK_URL` set to the bridge's
 HTTPS hostname; the shared `agentSdkApiKey` becomes the bridge's
-`MERIDIAN_API_KEY`. The bridge is stateless: no login is stored in it, the
-gateway supplies each account's current token in private requests, and session
-transcripts live in the container's ephemeral `/tmp`, so an image update
-restarts active Agent SDK sessions.
+`MERIDIAN_API_KEY`. No login is stored in the bridge: the gateway supplies each
+account's current token in private requests. The bridge is not stateless,
+though. Session state and transcripts live in one container's memory and
+ephemeral `/tmp`, so an image update restarts active Agent SDK sessions, and
+the bridge must run as a single instance. On a multi-instance plan, turns that
+land on another instance replay the whole history without prompt cache. The
+module sets `numberOfWorkers: 1`, which requires per-app scaling on the plan:
+
+    az appservice plan update --ids <planId> --per-site-scaling true
 
 Without `agentSdkAppName`, an externally hosted bridge may still be supplied
 through `agentSdkUrl`; it must be HTTPS and privately reachable. Supplying
