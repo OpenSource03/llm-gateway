@@ -6,7 +6,9 @@ import { setTimeout } from "node:timers";
 const { fetch } = globalThis;
 import test from "node:test";
 import {
+  BRIDGE_PATH_PLACEHOLDER,
   createRewriteServer,
+  neutralizeBridgePaths,
   stripProxyEnvironment,
 } from "./upstream-rewrite.mjs";
 
@@ -171,4 +173,76 @@ test("forwards headers and streams untouched while rewriting the messages body",
     server.close();
     upstream.close();
   }
+});
+
+const session =
+  "/tmp/claude-1000/-opt-meridian/ecd35f51-d18e-4c97-a9bf-fb3aa19f8bf5";
+
+test("replaces references to the bridge's own session files", () => {
+  const signed = { type: "thinking", thinking: session, signature: "sig" };
+  const input = {
+    system: `Scratch space: ${session}/scratchpad`,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: `[Image: source: ${session}/images/1.png]` },
+          {
+            type: "tool_result",
+            tool_use_id: "t1",
+            content: [
+              { type: "text", text: `saved to ${session}/images/2.png.` },
+            ],
+          },
+          {
+            type: "text",
+            text: "Client file /tmp/claude-501/-Users-me/x/a.png",
+          },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [signed, { type: "text", text: `see ${session}/images/` }],
+      },
+    ],
+  };
+  const { body, rewritten, locations } = neutralizeBridgePaths(
+    input,
+    "/opt/meridian",
+  );
+
+  assert.equal(rewritten, 4);
+  assert.deepEqual(locations, {
+    "system.other": 1,
+    "user.image_source": 1,
+    "tool_result.image_dir": 1,
+    "assistant.image_dir": 1,
+  });
+  assert.equal(body.system, `Scratch space: ${BRIDGE_PATH_PLACEHOLDER}`);
+  assert.equal(
+    body.messages[0].content[0].text,
+    `[Image: source: ${BRIDGE_PATH_PLACEHOLDER}]`,
+  );
+  assert.equal(
+    body.messages[0].content[1].content[0].text,
+    `saved to ${BRIDGE_PATH_PLACEHOLDER}.`,
+  );
+  assert.equal(
+    body.messages[0].content[2].text,
+    "Client file /tmp/claude-501/-Users-me/x/a.png",
+  );
+  assert.equal(body.messages[1].content[0], signed);
+  assert.equal(
+    JSON.stringify(body).includes("claude-1000/-opt-meridian/ecd35f51"),
+    true,
+  );
+  assert.equal(JSON.stringify(input.messages[0]).includes(session), true);
+});
+
+test("returns the original body when no bridge path is present", () => {
+  const input = clientBody();
+  const result = neutralizeBridgePaths(input, "/opt/meridian");
+  assert.equal(result.rewritten, 0);
+  assert.equal(result.body, input);
+  assert.equal(neutralizeBridgePaths(null, "/opt/meridian").rewritten, 0);
 });

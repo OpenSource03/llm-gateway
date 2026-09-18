@@ -3,6 +3,14 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.5
+
+- Bridge: replace references to the container's own Claude Code session files
+  (`/tmp/claude-<uid>/<cwd>/…`, for example stored image paths) before a
+  request reaches Anthropic. Client tools run on the client machine, where
+  those paths do not exist; a model that saw one tried to open it there. The
+  rewrite listener logs `bridge_path.neutralized` with counts and locations.
+
 ## 0.2.4
 
 - Codex over Claude: developer messages that arrive mid-thread (permission,

@@ -148,6 +148,12 @@ second bridge instance, and each one re-writes a whole history:
     | where ResultDescription has "transport.passthrough.checkpoint_replay"
     | summarize rebuilds = count()
 
+The bridge's rewrite listener (`component: "gateway-upstream"`) logs
+`environment.stripped` when it removes the SDK's own environment reminder and
+`bridge_path.neutralized` when it replaces a reference to the container's
+Claude Code session files. The latter carries counts by location and kind
+(`user.image_source`, `tool_result.image_dir`, …), never the text itself.
+
 Fresh-session volume (`lineage=new`) is intentionally not worth an alert:
 deployments and container recycles generate it legitimately. Use the continuity
 query instead.

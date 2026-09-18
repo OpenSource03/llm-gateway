@@ -9,7 +9,8 @@ import { URL } from "node:url";
 // The bundled Claude Code CLI appends a "# Environment" system-reminder that
 // describes the process it runs in (this container) to the first user turn.
 // Clients reached through the gateway already carry their own environment in
-// the system prompt, so that reminder is removed. Nothing else changes:
+// the system prompt, so that reminder is removed, and references to this
+// container's Claude Code session files are replaced. Nothing else changes:
 // headers, model, metadata, billing header, streaming and status codes are
 // forwarded untouched. This module never logs prompt content.
 
@@ -53,6 +54,71 @@ export function stripProxyEnvironment(body, cwd) {
   return removed
     ? { body: { ...body, messages }, removed }
     : { body, removed: 0 };
+}
+
+// Claude Code keeps per-session files (images, persisted results) under
+// /tmp/claude-<uid>/<cwd slug>/ in this container. Client tools run on the
+// client machine, where those paths do not exist, so the model must not be
+// sent a reference it would try to open there.
+export const BRIDGE_PATH_PLACEHOLDER =
+  "[bridge-local file, not available to tools]";
+
+const bridgePathPattern = (cwd) =>
+  new RegExp(
+    String.raw`/tmp/claude-\d+/` +
+      cwd.replace(/[^A-Za-z0-9]/g, "-").replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+      String.raw`/[^\s"'\x60\])>]*`,
+    "g",
+  );
+
+const pathKind = (text, offset, match) =>
+  /\[Image: source: ?$/.test(text.slice(Math.max(0, offset - 17), offset))
+    ? "image_source"
+    : match.includes("/images/")
+      ? "image_dir"
+      : "other";
+
+/** Replace references to this container's Claude Code session files. */
+export function neutralizeBridgePaths(body, cwd) {
+  if (!body || typeof body !== "object") return { body, rewritten: 0 };
+  const pattern = bridgePathPattern(cwd);
+  const locations = {};
+  let rewritten = 0;
+  const text = (value, where) =>
+    value.replace(pattern, (match, offset) => {
+      const trailing = /[.,;:!?]+$/.exec(match)?.[0] ?? "";
+      const key = `${where}.${pathKind(value, offset, match)}`;
+      locations[key] = (locations[key] ?? 0) + 1;
+      rewritten++;
+      return BRIDGE_PATH_PLACEHOLDER + trailing;
+    });
+  const blocks = (content, where) => {
+    if (typeof content === "string") return text(content, where);
+    if (!Array.isArray(content)) return content;
+    return content.map((block) => {
+      if (block?.type === "text" && typeof block.text === "string") {
+        const next = text(block.text, where);
+        return next === block.text ? block : { ...block, text: next };
+      }
+      if (block?.type === "tool_result") {
+        const next = blocks(block.content, "tool_result");
+        return next === block.content ? block : { ...block, content: next };
+      }
+      return block;
+    });
+  };
+  const system = blocks(body.system, "system");
+  const messages = Array.isArray(body.messages)
+    ? body.messages.map((message) => {
+        const where = message?.role === "assistant" ? "assistant" : "user";
+        const content = blocks(message?.content, where);
+        return content === message?.content ? message : { ...message, content };
+      })
+    : body.messages;
+
+  return rewritten
+    ? { body: { ...body, system, messages }, rewritten, locations }
+    : { body, rewritten: 0 };
 }
 
 const isJsonMessages = (req) =>
@@ -139,9 +205,19 @@ export function createRewriteServer({ host, port, upstream, cwd }) {
     } catch {
       return forward(req, res, raw);
     }
-    const { body, removed } = stripProxyEnvironment(parsed, cwd);
-    if (removed) emit("environment.stripped", { removed });
-    forward(req, res, removed ? Buffer.from(JSON.stringify(body)) : raw);
+    const stripped = stripProxyEnvironment(parsed, cwd);
+    const { body, rewritten, locations } = neutralizeBridgePaths(
+      stripped.body,
+      cwd,
+    );
+    if (stripped.removed)
+      emit("environment.stripped", { removed: stripped.removed });
+    if (rewritten) emit("bridge_path.neutralized", { rewritten, locations });
+    forward(
+      req,
+      res,
+      stripped.removed || rewritten ? Buffer.from(JSON.stringify(body)) : raw,
+    );
   });
   server.requestTimeout = 0;
   server.headersTimeout = 120_000;
