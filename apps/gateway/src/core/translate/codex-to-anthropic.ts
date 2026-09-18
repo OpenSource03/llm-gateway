@@ -355,9 +355,9 @@ export function codexToAnthropic(
 
     return generated;
   };
-  // Developer notices that arrive mid-thread (mode or model switches) stay at
-  // their position in the conversation: hoisting them into `system` would
-  // change the prompt prefix and invalidate the whole prompt cache.
+  // Developer notices that arrive mid-thread (mode, permission or model
+  // switches) stay in place: hoisted into `system`, resumed Agent SDK sessions
+  // dropped them and direct requests rewrote the whole cached prompt prefix.
   const lateInstructions: string[] = [];
   const placeLateInstructions = () => {
     if (lateInstructions.length === 0 || awaitingToolResults(messages)) return;
