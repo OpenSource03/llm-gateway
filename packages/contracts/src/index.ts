@@ -27,6 +27,13 @@ export const controlScopes = [
 export const controlScopeSchema = z.enum(controlScopes);
 export type ControlScope = z.infer<typeof controlScopeSchema>;
 
+export const gatewayUsageGroupBy = [
+  "account",
+  "client_key",
+  "model",
+  "provider",
+] as const;
+
 const optionalIntegerCap = z
   .number()
   .int()
@@ -764,7 +771,7 @@ export const controlOpenApiDocument = {
     },
     "/requests/usage": {
       get: operation(
-        "Aggregate retained request usage (UTC, at most 90 days; top 100 accounts)",
+        "Aggregate retained request usage (UTC, at most 90 days; top 100 accounts; group_by returns the top 8 groups plus one merged remainder)",
         "requests:read",
         undefined,
         {
@@ -780,6 +787,10 @@ export const controlOpenApiDocument = {
             queryParameter("account_id", { type: "string", format: "uuid" }),
             queryParameter("model", { type: "string" }),
             queryParameter("client_key_id", { type: "string", format: "uuid" }),
+            queryParameter("group_by", {
+              type: "string",
+              enum: [...gatewayUsageGroupBy],
+            }),
             queryParameter("include_testing", { type: "boolean" }),
           ],
         },
@@ -848,8 +859,7 @@ export interface GatewayUsageMetrics {
   reservedTokens: string;
   averageLatencyMs: number | null;
 }
-export type GatewayUsageGroupBy =
-  "account" | "client_key" | "model" | "provider";
+export type GatewayUsageGroupBy = (typeof gatewayUsageGroupBy)[number];
 export type GatewayUsageBucket = GatewayUsageMetrics & { bucket: string };
 export interface GatewayUsageGroup extends GatewayUsageMetrics {
   /** Null for requests without a value (for example no routed account). */

@@ -264,6 +264,26 @@ test(
         breakdown.groups.some((group) => BigInt(group.inputTokens) > 100n),
         false,
       );
+      // A top-ranked null group stays distinct from the merged remainder.
+      const byAccount = (
+        await getGatewayUsage(
+          usageQuery.parse({
+            from,
+            to,
+            client_key_id: client,
+            group_by: "account",
+          }),
+        )
+      ).breakdown!;
+      assert.deepEqual(
+        byAccount.groups.map((group) => [
+          group.key,
+          group.label,
+          group.other,
+          group.requestCount,
+        ]),
+        [[null, "Unassigned", false, 11]],
+      );
       assert.equal(
         (
           await getGatewayUsage(

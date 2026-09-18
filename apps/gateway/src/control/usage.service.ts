@@ -33,7 +33,10 @@ type Aggregate = Totals & {
 type GroupAggregate = Totals & {
   kind: number;
   bucket: Date | null;
-  group: string | null;
+  groupKey: string | null;
+  /** 1-based rank for a top group; null for the merged remainder. */
+  groupRank: number | null;
+  groupCount: number;
 };
 
 /** Ranked groups returned with their own series; the rest merge into one. */
@@ -93,42 +96,6 @@ const metrics = (row: Totals = ZERO): GatewayUsageMetrics => ({
   reservedTokens: String(row.reserved),
   averageLatencyMs: row.latency == null ? null : Math.round(row.latency),
 });
-/** Sum ranked-out groups; latency is request-weighted over completed requests. */
-const combine = (rows: Totals[]): Totals => {
-  const total = rows.reduce<Totals>(
-    (sum, row) => ({
-      requests: sum.requests + row.requests,
-      successes: sum.successes + row.successes,
-      errors: sum.errors + row.errors,
-      pending: sum.pending + row.pending,
-      unknown: sum.unknown + row.unknown,
-      input: sum.input + row.input,
-      cached: sum.cached + row.cached,
-      cacheRead: sum.cacheRead + row.cacheRead,
-      cacheWrite: sum.cacheWrite + row.cacheWrite,
-      cacheUnsplit: sum.cacheUnsplit + row.cacheUnsplit,
-      output: sum.output + row.output,
-      reserved: sum.reserved + row.reserved,
-      latency: null,
-    }),
-    ZERO,
-  );
-  const weighted = rows.filter((row) => row.latency != null);
-  const weight = weighted.reduce(
-    (sum, row) => sum + Number(row.requests - row.pending),
-    0,
-  );
-
-  return {
-    ...total,
-    latency: weight
-      ? weighted.reduce(
-          (sum, row) => sum + row.latency! * Number(row.requests - row.pending),
-          0,
-        ) / weight
-      : null,
-  };
-};
 const byUsage = (a: Totals, b: Totals) => {
   const delta = tokens(b) - tokens(a);
 
@@ -191,26 +158,44 @@ export const getGatewayUsage = async (
             ),
         );
       const top = accountRows.slice(0, 100);
-      const groupRows = query.group_by
+      // Rank in SQL so only the top groups plus one merged remainder leave the database.
+      const column = query.group_by && GROUP_COLUMN[query.group_by];
+      const groupRows = column
         ? await tx.$queryRaw<GroupAggregate[]>(Prisma.sql`
-          WITH ${filtered}
-          SELECT GROUPING(bucket)::int AS kind, bucket,
-            ${GROUP_COLUMN[query.group_by]}::text AS "group", ${METRIC_COLUMNS}
-          FROM filtered GROUP BY GROUPING SETS ((${GROUP_COLUMN[query.group_by]}), (${GROUP_COLUMN[query.group_by]}, bucket))
+          WITH ${filtered},
+          group_totals AS (
+            SELECT ${column}::text AS "groupKey", count(*) AS requests,
+              COALESCE(sum(COALESCE("inputTokens", 0) + COALESCE("cachedInputTokens", 0)
+                + COALESCE("outputTokens", 0)) FILTER (WHERE ${accounted}), 0) AS tokens
+            FROM filtered GROUP BY 1
+          ),
+          ranked AS (
+            SELECT "groupKey", row_number() OVER (
+              ORDER BY tokens DESC, requests DESC, "groupKey" NULLS LAST)::int AS rank
+            FROM group_totals
+          ),
+          labelled AS (
+            SELECT filtered.*,
+              CASE WHEN ranked.rank <= ${TOP_GROUPS} THEN ranked."groupKey" END AS "rankedKey",
+              CASE WHEN ranked.rank <= ${TOP_GROUPS} THEN ranked.rank END AS "groupRank"
+            FROM filtered JOIN ranked ON ranked."groupKey" IS NOT DISTINCT FROM ${column}::text
+          )
+          SELECT GROUPING(bucket)::int AS kind, bucket, "rankedKey" AS "groupKey", "groupRank",
+            (SELECT count(*) FROM group_totals)::int AS "groupCount", ${METRIC_COLUMNS}
+          FROM labelled
+          GROUP BY GROUPING SETS (("groupRank", "rankedKey"), ("groupRank", "rankedKey", bucket))
         `)
         : [];
       const groupTotals = groupRows
         .filter((row) => row.kind === 1)
-        .sort(
-          (a, b) =>
-            byUsage(a, b) || String(a.group).localeCompare(String(b.group)),
-        );
-      const ranked = groupTotals.slice(0, TOP_GROUPS);
-      const rest = groupTotals.slice(TOP_GROUPS);
+        .sort((a, b) => (a.groupRank ?? Infinity) - (b.groupRank ?? Infinity));
+      const ranked = groupTotals.filter((row) => row.groupRank !== null);
+      const rest = groupTotals.find((row) => row.groupRank === null);
+      const groupCount = groupRows[0]?.groupCount ?? 0;
       const accountIds = [
         ...top.flatMap((row) => (row.accountId ? [row.accountId] : [])),
         ...(query.group_by === "account"
-          ? ranked.flatMap((row) => (row.group ? [row.group] : []))
+          ? ranked.flatMap((row) => (row.groupKey ? [row.groupKey] : []))
           : []),
       ];
       const accounts = labels.accounts
@@ -230,7 +215,9 @@ export const getGatewayUsage = async (
           ? await tx.gatewayClientKey.findMany({
               where: {
                 id: {
-                  in: ranked.flatMap((row) => (row.group ? [row.group] : [])),
+                  in: ranked.flatMap((row) =>
+                    row.groupKey ? [row.groupKey] : [],
+                  ),
                 },
               },
               select: { id: true, name: true },
@@ -247,31 +234,28 @@ export const getGatewayUsage = async (
           return clientKeyLabels.get(key) ?? key;
         return key;
       };
-      const bucketRows = (keys: Set<string | null>) => {
-        const byBucket = new Map<string, Totals[]>();
-        for (const row of groupRows) {
-          if (row.kind !== 0 || !keys.has(row.group)) continue;
-          const bucket = row.bucket!.toISOString();
-          byBucket.set(bucket, [...(byBucket.get(bucket) ?? []), row]);
-        }
-        return new Map(
-          [...byBucket].map(([bucket, list]) => [bucket, combine(list)]),
+      const groupSeries = (rank: number | null) =>
+        series(
+          new Map(
+            groupRows
+              .filter((row) => row.kind === 0 && row.groupRank === rank)
+              .map((row) => [row.bucket!.toISOString(), row]),
+          ),
         );
-      };
       const groups: GatewayUsageGroup[] = ranked.map((row) => ({
-        key: row.group,
-        label: groupLabel(row.group),
+        key: row.groupKey,
+        label: groupLabel(row.groupKey),
         other: false,
         ...metrics(row),
-        series: series(bucketRows(new Set([row.group]))),
+        series: groupSeries(row.groupRank),
       }));
-      if (rest.length) {
+      if (rest) {
         groups.push({
           key: null,
-          label: `${rest.length} more`,
+          label: `${groupCount - ranked.length} more`,
           other: true,
-          ...metrics(combine(rest)),
-          series: series(bucketRows(new Set(rest.map((row) => row.group)))),
+          ...metrics(rest),
+          series: groupSeries(null),
         });
       }
 
@@ -300,7 +284,7 @@ export const getGatewayUsage = async (
           ? {
               breakdown: {
                 groupBy: query.group_by,
-                groupCount: groupTotals.length,
+                groupCount,
                 groups,
               },
             }
