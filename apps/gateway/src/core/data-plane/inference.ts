@@ -705,11 +705,11 @@ const proxyGatewayRequest = async (
         streamedUsage?: ObservedUsage,
         diagnostics?: StreamDiagnostics,
       ) => {
-        const observedUsage =
-          streamedUsage ??
-          (error
-            ? {}
-            : await extractResponseUsage(response, prepared.publicProtocol));
+        const extracted =
+          streamedUsage || error
+            ? undefined
+            : await extractResponseUsage(response, prepared.publicProtocol);
+        const observedUsage = streamedUsage ?? extracted?.usage ?? {};
         // Partial message_start usage is commonly zero. On any cancellation,
         // truncation, or error, usage is incomplete and cannot reopen reserved
         // capacity; trust it only after a clean terminal completion.
@@ -734,6 +734,7 @@ const proxyGatewayRequest = async (
             transport: routed.transport.id,
             errorClass,
             ...diagnostics,
+            ...extracted?.cacheBreakdown,
             inputTokens: usage.input,
             outputTokens: usage.output,
             cachedInputTokens: usage.cached,

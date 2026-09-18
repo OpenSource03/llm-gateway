@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { wrapStreamLifecycle } from "./data-plane.service";
+import { extractResponseUsage } from "./data-plane/stream-lifecycle";
 import { createLeaseGuard } from "./leases";
 
 for (const terminal of [true, false]) {
@@ -434,4 +435,41 @@ test("lease abort discards already queued downstream bytes", async () => {
 
   await new Promise((resolve) => setTimeout(resolve, 20));
   await assert.rejects(reader.read(), /distributed lease was lost/);
+});
+
+test("non-streamed usage keeps the cache read and write split", async () => {
+  const json = (usage: Record<string, unknown>) =>
+    new Response(JSON.stringify({ usage }), {
+      headers: { "content-type": "application/json" },
+    });
+
+  assert.deepEqual(
+    await extractResponseUsage(
+      json({
+        input_tokens: 3,
+        output_tokens: 7,
+        cache_read_input_tokens: 100,
+        cache_creation_input_tokens: 50,
+      }),
+      "anthropic",
+    ),
+    {
+      usage: { input: 3, output: 7, cached: 150 },
+      cacheBreakdown: { cacheReadInputTokens: 100, cacheWriteInputTokens: 50 },
+    },
+  );
+  assert.deepEqual(
+    await extractResponseUsage(
+      json({
+        input_tokens: 153,
+        output_tokens: 7,
+        input_tokens_details: { cached_tokens: 100, cache_write_tokens: 50 },
+      }),
+      "responses",
+    ),
+    {
+      usage: { input: 3, output: 7, cached: 150 },
+      cacheBreakdown: { cacheReadInputTokens: 100, cacheWriteInputTokens: 50 },
+    },
+  );
 });
