@@ -246,3 +246,31 @@ test("returns the original body when no bridge path is present", () => {
   assert.equal(result.body, input);
   assert.equal(neutralizeBridgePaths(null, "/opt/meridian").rewritten, 0);
 });
+
+test("scrubs bridge paths from replayed tool calls and keeps closing braces", () => {
+  const call = {
+    type: "tool_use",
+    id: "t9",
+    name: "exec",
+    input: { cmd: `ls -la ${session}/images/`, env: { keep: "x" }, n: 1 },
+  };
+  const { body, rewritten, locations } = neutralizeBridgePaths(
+    {
+      messages: [
+        { role: "assistant", content: [call] },
+        { role: "user", content: `open ${session}/images/1.png}` },
+      ],
+    },
+    "/opt/meridian",
+  );
+
+  assert.equal(rewritten, 2);
+  assert.deepEqual(locations, { "tool_use.image_dir": 1, "user.image_dir": 1 });
+  assert.equal(
+    body.messages[0].content[0].input.cmd,
+    `ls -la ${BRIDGE_PATH_PLACEHOLDER}`,
+  );
+  assert.equal(body.messages[0].content[0].input.env, call.input.env);
+  assert.equal(body.messages[0].content[0].id, "t9");
+  assert.equal(body.messages[1].content, `open ${BRIDGE_PATH_PLACEHOLDER}}`);
+});
