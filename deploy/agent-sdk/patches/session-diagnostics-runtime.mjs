@@ -49,7 +49,13 @@ const numericFields = new Set([
   "toolCount",
   "sinceLastMs",
   "retryAfterMs",
+  "expectedToolIds",
+  "receivedToolResults",
 ]);
+// Code-defined labels only (lineage type, replay reason); never free text.
+const labelFields = new Set(["lineage", "reason"]);
+const safeLabel = (value) =>
+  typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value);
 const booleanFields = new Set([
   "isResume",
   "isUndo",
@@ -69,6 +75,7 @@ export function safeTransportFields(extra = {}, context = {}) {
       output[key] = value;
     else if (booleanFields.has(key) && typeof value === "boolean")
       output[key] = value;
+    else if (labelFields.has(key) && safeLabel(value)) output[key] = value;
     else if (key === "requestId" && typeof value === "string")
       output.request = digest(value);
     else if (
@@ -107,6 +114,31 @@ export function logTransportDiagnostic(event, extra, context) {
   if (typeof event !== "string" || !/^[a-z][a-z0-9_.-]{0,95}$/.test(event))
     return;
   emitDiagnostic("transport." + event, safeTransportFields(extra, context));
+}
+
+export const countToolResults = (messages) =>
+  (Array.isArray(messages) ? messages : []).reduce(
+    (count, message) =>
+      count +
+      (Array.isArray(message?.content)
+        ? message.content.filter((block) => block?.type === "tool_result")
+            .length
+        : 0),
+    0,
+  );
+
+const tokenCount = (value) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+
+/** Per-request token usage with cache reads and writes kept apart. */
+export function logUsage(requestId, usage) {
+  emitDiagnostic("transport.request.usage", {
+    request: digest(requestId),
+    inputTokens: tokenCount(usage?.input_tokens),
+    outputTokens: tokenCount(usage?.output_tokens),
+    cacheReadInputTokens: tokenCount(usage?.cache_read_input_tokens),
+    cacheCreationInputTokens: tokenCount(usage?.cache_creation_input_tokens),
+  });
 }
 
 export async function storageSnapshot(path = "/tmp") {

@@ -728,8 +728,11 @@ const proxyGatewayRequest = async (
           Logger.info("Gateway stream finalized", {
             requestId: requestLog.id,
             accountId: routed.accountId,
+            transport: routed.transport.id,
             errorClass,
             ...diagnostics,
+            inputTokens: usage.input,
+            outputTokens: usage.output,
             inputUsageSource:
               usage.input === undefined ? "reservation" : "provider",
             outputUsageSource:

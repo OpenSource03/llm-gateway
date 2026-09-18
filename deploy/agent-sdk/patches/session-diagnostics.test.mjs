@@ -9,6 +9,7 @@ import {
   requireStorage,
   rejectResumeFallback,
   safeTransportFields,
+  countToolResults,
 } from "./session-diagnostics-runtime.mjs";
 import { patchSessionDiagnostics } from "./session-diagnostics.mjs";
 
@@ -144,4 +145,33 @@ test("transport diagnostics use an allowlist even for nested errors and credenti
     "sessionIdHash",
     "status",
   ]);
+});
+test("continuity diagnostics keep code labels and counts but drop free text", () => {
+  const safe = safeTransportFields({
+    lineage: "continuation",
+    reason: "incomplete_or_mismatched_results",
+    expectedToolIds: 1,
+    receivedToolResults: 2,
+  });
+  assert.deepEqual(safe, {
+    lineage: "continuation",
+    reason: "incomplete_or_mismatched_results",
+    expectedToolIds: 1,
+    receivedToolResults: 2,
+  });
+  assert.deepEqual(
+    safeTransportFields({ reason: "Prompt said: delete everything" }),
+    {},
+  );
+});
+test("tool result counting ignores text and malformed messages", () => {
+  assert.equal(
+    countToolResults([
+      { role: "user", content: [{ type: "tool_result" }, { type: "text" }] },
+      { role: "user", content: "plain" },
+      null,
+      { role: "user", content: [{ type: "tool_result" }] },
+    ]),
+    2,
+  );
 });
