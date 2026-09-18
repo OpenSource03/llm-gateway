@@ -1,3 +1,4 @@
+import { gatewayUsageGroupBy } from "@opensource03/llm-gateway-contracts";
 import { z } from "zod";
 
 const DAY = 86_400_000;
@@ -13,7 +14,7 @@ export const usageQuery = z
     account_id: z.string().uuid().optional(),
     model: z.string().min(1).max(200).optional(),
     client_key_id: z.string().uuid().optional(),
-    group_by: z.enum(["account", "client_key", "model", "provider"]).optional(),
+    group_by: z.enum(gatewayUsageGroupBy).optional(),
     include_testing: z
       .enum(["true", "false"])
       .transform((value) => value === "true")
