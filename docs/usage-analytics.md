@@ -17,8 +17,16 @@ including unassigned requests. All summary/chart totals cover the entire result,
 not only the top accounts. Token values are decimal strings to retain integer
 precision. Request history retention is 90 days; older ranges can be empty.
 
+`group_by` (`account`, `client_key`, `model`, or `provider`) adds a `breakdown`:
+the eight groups with the most accounted tokens, each with totals and its own
+series, and one merged group (`other: true`) for the rest. `groupCount` is the
+number of groups before merging. Group labels use client key names with
+`client-keys:read` and account labels with `accounts:read`; otherwise IDs.
+
 Ordinary input, cached input, and output are added once. Cached input includes
-reads and cache creation, so it is not a cache-hit rate. Interrupted (`stream_error`)
+reads and cache creation, so it is not a cache-hit rate. `cacheReadTokens` and `cacheWriteTokens` split it for
+requests recorded since the split was stored; older rows are reported as
+`cacheUnsplitTokens`. Interrupted (`stream_error`)
 and pending (`started`) token reservations are reported separately and excluded
 from accounted totals. Unknown usage includes interrupted requests and rows with
 missing input/output counts. Older rows can retain estimates even after success;
