@@ -67,7 +67,7 @@ const bridgePathPattern = (cwd) =>
   new RegExp(
     String.raw`/tmp/claude-\d+/` +
       cwd.replace(/[^A-Za-z0-9]/g, "-").replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
-      String.raw`/[^\s"'\x60\])>]*`,
+      String.raw`/[^\s"'\x60\])>}]*`,
     "g",
   );
 
@@ -92,6 +92,22 @@ export function neutralizeBridgePaths(body, cwd) {
       rewritten++;
       return BRIDGE_PATH_PLACEHOLDER + trailing;
     });
+  // A replayed call that tried to open such a path keeps it in its input.
+  const input = (value) => {
+    if (typeof value === "string") return text(value, "tool_use");
+    if (Array.isArray(value)) {
+      const next = value.map(input);
+      return next.some((item, index) => item !== value[index]) ? next : value;
+    }
+    if (!value || typeof value !== "object") return value;
+    const entries = Object.entries(value).map(([key, item]) => [
+      key,
+      input(item),
+    ]);
+    return entries.some(([key, item]) => item !== value[key])
+      ? Object.fromEntries(entries)
+      : value;
+  };
   const blocks = (content, where) => {
     if (typeof content === "string") return text(content, where);
     if (!Array.isArray(content)) return content;
@@ -103,6 +119,10 @@ export function neutralizeBridgePaths(body, cwd) {
       if (block?.type === "tool_result") {
         const next = blocks(block.content, "tool_result");
         return next === block.content ? block : { ...block, content: next };
+      }
+      if (block?.type === "tool_use") {
+        const next = input(block.input);
+        return next === block.input ? block : { ...block, input: next };
       }
       return block;
     });
