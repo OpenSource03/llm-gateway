@@ -452,12 +452,17 @@ const createResponsesStreamObserver = () => {
   };
 };
 
+export type CacheBreakdown = Pick<
+  StreamDiagnostics,
+  "cacheReadInputTokens" | "cacheWriteInputTokens"
+>;
+
 export const extractResponseUsage = async (
   response: Response,
   publicProtocol: "anthropic" | "responses",
-): Promise<ObservedUsage> => {
+): Promise<{ usage: ObservedUsage; cacheBreakdown: CacheBreakdown }> => {
   if (!response.headers.get("content-type")?.includes("application/json"))
-    return {};
+    return { usage: {}, cacheBreakdown: {} };
   try {
     const body = (await response.clone().json()) as {
       usage?: {
@@ -470,26 +475,37 @@ export const extractResponseUsage = async (
     };
 
     if (publicProtocol === "responses") {
-      const cached = responsesCachedInputTokens(
-        body.usage?.input_tokens_details,
-      );
+      const details = body.usage?.input_tokens_details;
+      const cached = responsesCachedInputTokens(details);
 
       return {
-        input: uncachedResponsesInputTokens(body.usage?.input_tokens, cached),
-        output: body.usage?.output_tokens,
-        cached,
+        usage: {
+          input: uncachedResponsesInputTokens(body.usage?.input_tokens, cached),
+          output: body.usage?.output_tokens,
+          cached,
+        },
+        cacheBreakdown: {
+          cacheReadInputTokens: details?.cached_tokens,
+          cacheWriteInputTokens: details?.cache_write_tokens,
+        },
       };
     }
 
     return {
-      input: body.usage?.input_tokens,
-      output: body.usage?.output_tokens,
-      cached: combinedCachedInputTokens(
-        body.usage?.cache_read_input_tokens,
-        body.usage?.cache_creation_input_tokens,
-      ),
+      usage: {
+        input: body.usage?.input_tokens,
+        output: body.usage?.output_tokens,
+        cached: combinedCachedInputTokens(
+          body.usage?.cache_read_input_tokens,
+          body.usage?.cache_creation_input_tokens,
+        ),
+      },
+      cacheBreakdown: {
+        cacheReadInputTokens: body.usage?.cache_read_input_tokens,
+        cacheWriteInputTokens: body.usage?.cache_creation_input_tokens,
+      },
     };
   } catch {
-    return {};
+    return { usage: {}, cacheBreakdown: {} };
   }
 };
