@@ -66,6 +66,32 @@ const appendMessage = (
   }
 };
 
+const blockIds = (
+  message: AnthropicMessage | undefined,
+  type: "tool_use" | "tool_result",
+): string[] => {
+  if (!Array.isArray(message?.content)) return [];
+  const key = type === "tool_use" ? "id" : "tool_use_id";
+
+  return message.content.flatMap((block) =>
+    block.type === type && typeof block[key] === "string" ? [block[key]] : [],
+  );
+};
+
+/** True while the latest assistant tool calls still lack their tool results. */
+const awaitingToolResults = (messages: AnthropicMessage[]): boolean => {
+  const last = messages.at(-1);
+  const assistant = last?.role === "assistant" ? last : messages.at(-2);
+
+  if (assistant?.role !== "assistant") return false;
+  const calls = blockIds(assistant, "tool_use");
+  if (calls.length === 0) return false;
+  if (last === assistant) return true;
+  const answered = new Set(blockIds(last, "tool_result"));
+
+  return calls.some((id) => !answered.has(id));
+};
+
 const codexImageBlock = (
   content: Record<string, unknown>,
 ): AnthropicContentBlock => {
@@ -329,9 +355,26 @@ export function codexToAnthropic(
 
     return generated;
   };
+  // Developer notices that arrive mid-thread (mode or model switches) stay at
+  // their position in the conversation: hoisting them into `system` would
+  // change the prompt prefix and invalidate the whole prompt cache.
+  const lateInstructions: string[] = [];
+  const placeLateInstructions = () => {
+    if (lateInstructions.length === 0 || awaitingToolResults(messages)) return;
+    appendMessage(
+      messages,
+      "user",
+      lateInstructions.splice(0).map((text) => ({
+        type: "text",
+        text: `<system-reminder>\n${text}\n</system-reminder>`,
+      })),
+    );
+  };
 
   for (const item of source.input) {
     const type = item.type;
+
+    placeLateInstructions();
 
     if (type === "additional_tools" || type === "reasoning") continue;
     if (type === "tool_search_call") {
@@ -369,12 +412,13 @@ export function codexToAnthropic(
       const blocks = messageBlocks(item);
 
       if (role === "developer" || role === "system") {
-        system.push(
-          blocks
-            .filter((block) => block.type === "text")
-            .map((block) => String(block.text ?? ""))
-            .join("\n"),
-        );
+        const text = blocks
+          .filter((block) => block.type === "text")
+          .map((block) => String(block.text ?? ""))
+          .join("\n");
+
+        if (messages.length === 0) system.push(text);
+        else lateInstructions.push(text);
       } else if (role === "user" || role === "assistant") {
         appendMessage(messages, role, blocks);
       } else {
@@ -424,6 +468,11 @@ export function codexToAnthropic(
     throw new TypeError(
       `Codex input item '${String(type)}' is not portable to Claude`,
     );
+  }
+  placeLateInstructions();
+  if (lateInstructions.length > 0) {
+    // Only reachable when the history ends on unanswered tool calls.
+    system.push(...lateInstructions);
   }
   if (messages.length === 0)
     throw new TypeError("Codex request has no Claude-compatible messages");
