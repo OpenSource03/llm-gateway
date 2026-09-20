@@ -197,7 +197,7 @@ export function observeStderr(data, requestId) {
 
 export async function inspectCheckpoint(file) {
   const before = await stat(file);
-  if (!before.isFile() || before.size > 128 * 1024 * 1024)
+  if (!before.isFile() || before.size > 256 * 1024 * 1024)
     return { valid: false, reason: "file_bounds", bytes: before.size };
   const input = createReadStream(file);
   const lines = createInterface({ input, crlfDelay: Infinity });
@@ -213,7 +213,9 @@ export async function inspectCheckpoint(file) {
     for await (const line of lines) {
       if (!line) continue;
       records++;
-      if (line.length > 16 * 1024 * 1024 || records > 250_000) {
+      // A pasted image or document lands as one transcript line, so this bound
+      // must clear a long illustrated thread or its checkpoint never persists.
+      if (line.length > 64 * 1024 * 1024 || records > 250_000) {
         result = { valid: false, reason: "record_bounds" };
         break;
       }
