@@ -44,6 +44,18 @@ test("accepts complete native checkpoint without exposing content", async (t) =>
   assert.equal(result.messages, 2);
   assert.equal(JSON.stringify(result).includes("synthetic"), false);
 });
+test("accepts a checkpoint holding one very large record (pasted media)", async (t) => {
+  const huge = {
+    type: "user",
+    uuid: "root",
+    parentUuid: null,
+    message: { content: "x".repeat(20 * 1024 * 1024) },
+  };
+  const result = await inspectCheckpoint(await fixture(t, [huge, reply]));
+
+  assert.equal(result.valid, true);
+  assert.equal(result.messages, 2);
+});
 test("rejects partial JSON followed by metadata (disk-full incident)", async (t) => {
   const result = await inspectCheckpoint(
     await fixture(t, [

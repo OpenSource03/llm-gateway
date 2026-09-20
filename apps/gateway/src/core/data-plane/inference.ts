@@ -50,7 +50,7 @@ import {
 
 const LEASE_TTL_MS = 120_000;
 const LEASE_HEARTBEAT_MS = 30_000;
-const MAX_INFERENCE_LIFETIME_MS = 10 * 60_000;
+const MAX_INFERENCE_LIFETIME_MS = 25 * 60_000;
 const MAX_UPSTREAM_DISPATCHES = 4;
 
 const providerMetadataFromCapabilities = (value: unknown): unknown =>
