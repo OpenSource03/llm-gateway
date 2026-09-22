@@ -16,16 +16,18 @@ export function patchSessionDiagnostics(source) {
   // Assert the native behavior instead of reapplying it, so a future bump
   // that regresses either one fails the build rather than silently dropping
   // tool lineage from replayed history.
+  // The bundler renames locals between releases (block -> block2), so match
+  // the behavior with the identifier left open rather than its exact spelling.
   const requireUpstream = (marker, label) => {
-    if (!source.includes(marker))
+    if (!marker.test(source))
       throw new Error(`Unsupported Meridian upstream behavior: ${label}`);
   };
   requireUpstream(
-    "return `Previously called tool: ${JSON.stringify({ id: block.id, name: block.name, input: block.input })}`;",
+    /return `Previously called tool: \$\{JSON\.stringify\(\{ id: (block\d*)\.id, name: \1\.name, input: \1\.input \}\)\}`;/,
     "historical tool_use replay",
   );
   requireUpstream(
-    'const metadata = { type: "text", text: replayToolResultHeader(block, info) };',
+    /const metadata = \{ type: "text", text: replayToolResultHeader\(block\d*, info\d*\) \};/,
     "unconditional tool_result replay header",
   );
   replace(
@@ -69,8 +71,10 @@ export async function patchDistribution(directory) {
   const pkg = JSON.parse(
     await readFile(join(directory, "../package.json"), "utf8"),
   );
-  if (pkg.version !== "1.71.1")
-    throw new Error("Session diagnostics require Meridian 1.71.1");
+  // Anchors below prove compatibility; the version pin only blocks an untested build.
+  const expected = process.env.MERIDIAN_VERSION;
+  if (!expected || pkg.version !== expected)
+    throw new Error(`Session diagnostics require Meridian ${expected ?? "(MERIDIAN_VERSION unset)"}, found ${pkg.version}`);
   let count = 0;
   let loggerCount = 0;
   for (const file of await readdir(directory)) {

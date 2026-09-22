@@ -1,6 +1,6 @@
 FROM node:22-bookworm-slim AS installer
 
-ARG MERIDIAN_VERSION=1.71.1
+ARG MERIDIAN_VERSION=1.75.0
 
 RUN npm install --global --omit=dev --no-audit --no-fund "@rynfar/meridian@${MERIDIAN_VERSION}" && \
     node -e "const p=require('/usr/local/lib/node_modules/@rynfar/meridian/package.json');if(p.version!=='${MERIDIAN_VERSION}'||p.license!=='MIT')process.exit(1)"
@@ -10,7 +10,8 @@ COPY deploy/agent-sdk/patches/token-profiles.mjs /tmp/
 COPY deploy/agent-sdk/patches/session-diagnostics*.mjs /tmp/
 COPY deploy/agent-sdk/patches/upstream-rewrite.mjs /usr/local/lib/node_modules/@rynfar/meridian/dist/gateway-upstream-rewrite.mjs
 COPY deploy/agent-sdk/patches/bridge-entry.mjs /usr/local/lib/node_modules/@rynfar/meridian/dist/gateway-bridge-entry.mjs
-RUN node /tmp/preserve-cancelled-checkpoint.mjs \
+RUN export MERIDIAN_VERSION && \
+    node /tmp/preserve-cancelled-checkpoint.mjs \
       /usr/local/lib/node_modules/@rynfar/meridian/dist && \
     node /tmp/token-profiles.mjs /usr/local/lib/node_modules/@rynfar/meridian/dist && \
     node /tmp/session-diagnostics.mjs /usr/local/lib/node_modules/@rynfar/meridian/dist && \

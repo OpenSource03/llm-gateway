@@ -17,7 +17,7 @@ pre-turn checkpoint instead of deleting it merely because partial assistant
 content reached the client. The canceled fork is still aborted and abandoned,
 so this does not continue generation or increase usage after cancellation.
 
-The checked v1.71.1 package and README declare MIT, but its upstream repository
+The checked v1.75.0 package and README declare MIT, but its upstream repository
 did not contain a standalone license text at the reviewed commit, and the
 package itself ships none. Review that
 status before redistributing a derived image. See
@@ -32,9 +32,13 @@ support the target model and receives its explicit canonical ID at inference:
 export GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON='[{"from":"claude-example-9","to":"claude-example-9-1","displayName":"Claude Example 9.1"}]'
 ```
 
-Prefer upgrading the pinned bridge version. Meridian 1.71.1 publishes
-claude-fable-5-1 ahead of claude-fable-5 and pins it as the canonical fable
-tier, so the earlier Fable rewrite is no longer required and was removed.
+Prefer upgrading the pinned bridge version: new Claude models need a Meridian
+release, because it carries the model table and the bundled Claude Code floor.
+Meridian 1.75.0 adds claude-opus-5-5 and requires Claude Code 2.1.280. The
+`Meridian update` workflow checks npm every 6 hours and opens a pull request
+once the new release builds with every patch applied and passes the patch tests.
+The pinned version lives only in the Dockerfile `MERIDIAN_VERSION` argument;
+the patch scripts read it from the build environment.
 
 Generate the private bridge key and keep it outside the repository:
 
