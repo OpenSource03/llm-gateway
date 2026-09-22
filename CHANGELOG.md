@@ -3,6 +3,28 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.9
+
+- Bridge: update Meridian from 1.71.1 to 1.75.0, which adds `claude-opus-5-5`
+  and bundles Claude Code 2.1.280. On 1.71.1 every Opus 5.5 request failed
+  upstream within about a second.
+- The pinned Meridian version now lives only in the Dockerfile argument; the
+  patch scripts read it from the build environment instead of repeating it.
+- The replay-behavior assertions tolerate bundler-renamed identifiers
+  (`block` became `block2` in 1.75.0).
+- New `Meridian update` workflow: every 6 hours it proposes the latest Meridian
+  release as a pull request after building the bridge with every patch and
+  passing the patch and in-image tests, or opens an issue when it cannot.
+
+## 0.2.8
+
+- Bridge: a single transcript record may reach 64 MiB (checkpoint files
+  256 MiB). A pasted image or document lands as one line, so the previous
+  16 MiB bound made long illustrated threads unresumable: every checkpoint was
+  rejected as `record_bounds` and each retry replayed the whole history.
+- A single inference may run 25 minutes instead of 10. The old cap aborted long
+  streaming turns mid-response and left the bridge session unusable.
+
 ## 0.2.6
 
 - Request logs store the cache split (`cacheReadInputTokens`,

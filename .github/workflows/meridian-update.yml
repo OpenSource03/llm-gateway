@@ -1,0 +1,132 @@
+name: Meridian update
+
+# New Claude models need a Meridian release (it pins the Claude Code version and
+# the model table). Propose each release as a verified pull request so the bridge
+# never lags a model launch by more than a few hours.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: meridian-update
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: master
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Compare pinned and published Meridian
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          current=$(sed -n 's/^ARG MERIDIAN_VERSION=//p' deploy/agent-sdk/Dockerfile)
+          latest=$(npm view @rynfar/meridian version)
+          [[ "$current" =~ $semver && "$latest" =~ $semver ]] || { echo "Unexpected version format: '$current' / '$latest'"; exit 1; }
+          branch="chore/meridian-$latest"
+          {
+            echo "current=$current"
+            echo "latest=$latest"
+            echo "branch=$branch"
+          } >> "$GITHUB_OUTPUT"
+          newest=$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)
+          if [[ "$latest" == "$current" || "$newest" != "$latest" ]]; then
+            echo "Pinned Meridian $current is current."
+            echo "update=false" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "Meridian $latest is already proposed on $branch."
+            echo "update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pin the new release
+        if: steps.versions.outputs.update == 'true'
+        env:
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          sed -i "s/^ARG MERIDIAN_VERSION=.*/ARG MERIDIAN_VERSION=$LATEST/" deploy/agent-sdk/Dockerfile
+          sed -i "s/MERIDIAN_VERSION: .*/MERIDIAN_VERSION: $LATEST/" deploy/agent-sdk/compose.yml
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: steps.versions.outputs.update == 'true'
+
+      # The build applies every bridge patch against exact anchors, so it fails
+      # when a release moved code the gateway depends on.
+      - name: Build the candidate bridge
+        if: steps.versions.outputs.update == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: deploy/agent-sdk/Dockerfile
+          load: true
+          push: false
+          tags: llm-gateway-agent-sdk:candidate
+
+      - name: Test the patches and the installed checkpoint guard
+        if: steps.versions.outputs.update == 'true'
+        run: |
+          node --test deploy/agent-sdk/patches/*.test.mjs
+          GATEWAY_AGENT_SDK_FAULT_TEST_IMAGE=llm-gateway-agent-sdk:candidate \
+            node --test deploy/agent-sdk/patches/session-storage-fault.test.mjs
+
+      - name: Record the bundled Claude versions
+        id: bundled
+        if: steps.versions.outputs.update == 'true'
+        run: |
+          versions=$(docker run --rm --entrypoint node llm-gateway-agent-sdk:candidate -e "
+            const v = (p) => { try { return require(p).version } catch { return 'unknown' } };
+            console.log('Claude Code ' + v('/opt/meridian/node_modules/@anthropic-ai/claude-code/package.json') +
+              ', Agent SDK ' + v('/opt/meridian/node_modules/@anthropic-ai/claude-agent-sdk/package.json'));")
+          echo "summary=$versions" >> "$GITHUB_OUTPUT"
+
+      - name: Open the pull request
+        if: steps.versions.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT: ${{ steps.versions.outputs.current }}
+          LATEST: ${{ steps.versions.outputs.latest }}
+          BRANCH: ${{ steps.versions.outputs.branch }}
+          BUNDLED: ${{ steps.bundled.outputs.summary }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898729+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -am "chore(bridge): update Meridian to $LATEST"
+          git push origin "$BRANCH"
+          gh pr create --base master --head "$BRANCH" \
+            --title "chore(bridge): update Meridian to $LATEST" \
+            --body "Meridian $LATEST is published; the bridge pins $CURRENT. New Claude models usually need this release.
+
+          This run built the bridge image with every patch applied, passed the patch tests and the in-image checkpoint guard test. The candidate bundles $BUNDLED.
+
+          After merging, dispatch **Deploy Azure App Service** with the merge commit to roll it out."
+
+      - name: Report a candidate that does not build
+        if: failure() && steps.versions.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.versions.outputs.latest }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Meridian $LATEST needs bridge patch updates"
+          if ! gh issue list --state open --search "$title in:title" --json number --jq '.[0].number' | grep -q .; then
+            gh issue create --title "$title" --body "The scheduled update could not build or test the bridge on Meridian $LATEST, so no pull request was opened. New Claude models stay unavailable until the patches are adapted. Details: $RUN_URL"
+          fi
