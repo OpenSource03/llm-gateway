@@ -74,7 +74,9 @@ export async function patchDistribution(directory) {
   // Anchors below prove compatibility; the version pin only blocks an untested build.
   const expected = process.env.MERIDIAN_VERSION;
   if (!expected || pkg.version !== expected)
-    throw new Error(`Session diagnostics require Meridian ${expected ?? "(MERIDIAN_VERSION unset)"}, found ${pkg.version}`);
+    throw new Error(
+      `Session diagnostics require Meridian ${expected ?? "(MERIDIAN_VERSION unset)"}, found ${pkg.version}`,
+    );
   let count = 0;
   let loggerCount = 0;
   for (const file of await readdir(directory)) {

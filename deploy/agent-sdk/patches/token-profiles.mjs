@@ -78,7 +78,9 @@ if (
   // Anchors below prove compatibility; the version pin only blocks an untested build.
   const expected = process.env.MERIDIAN_VERSION;
   if (!expected || pkg.version !== expected)
-    throw new Error(`Token profiles require Meridian ${expected ?? "(MERIDIAN_VERSION unset)"}, found ${pkg.version}`);
+    throw new Error(
+      `Token profiles require Meridian ${expected ?? "(MERIDIAN_VERSION unset)"}, found ${pkg.version}`,
+    );
   let patched = 0;
   for (const file of await readdir(directory)) {
     if (!file.endsWith(".js")) continue;
