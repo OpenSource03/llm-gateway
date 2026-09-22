@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  # Dispatched by the Meridian update workflow: pull requests it opens with
+  # GITHUB_TOKEN do not trigger pull_request runs.
+  workflow_dispatch:
   pull_request:
   push:
     branches: [master]

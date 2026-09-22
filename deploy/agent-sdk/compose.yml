@@ -14,8 +14,6 @@ services:
     build:
       context: ../..
       dockerfile: deploy/agent-sdk/Dockerfile
-      args:
-        MERIDIAN_VERSION: 1.75.0
     environment:
       MERIDIAN_API_KEY: ${GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY:?set GATEWAY_ANTHROPIC_AGENT_SDK_API_KEY}
       MERIDIAN_PASSTHROUGH: "1"
