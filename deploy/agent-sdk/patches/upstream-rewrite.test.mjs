@@ -378,6 +378,21 @@ test("each upstream call emits one structural upstream.response event", async ()
         );
         return;
       }
+      if (req.url.includes("gz=1")) {
+        const sse =
+          'event: message_start\ndata: {"type":"message_start"}\n\n' +
+          'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}\n\n' +
+          'event: message_stop\ndata: {"type":"message_stop"}\n\n';
+        const packed = gzipSync(sse);
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "content-encoding": "gzip",
+        });
+        // Split mid-member so the scan must decompress incrementally.
+        res.write(packed.subarray(0, 7));
+        setTimeout(() => res.end(packed.subarray(7)), 10);
+        return;
+      }
       res.writeHead(200, {
         "content-type": "text/event-stream",
         "request-id": "req_stream_1",
@@ -418,13 +433,23 @@ test("each upstream call emits one structural upstream.response event", async ()
       body,
     });
     await streamed.text();
+    const compressed = await fetch(base + "/v1/messages?beta=true&gz=1", {
+      method: "POST",
+      headers,
+      body,
+    });
+    // The client still receives the original stream.
+    assert.match(await compressed.text(), /message_stop/);
     await new Promise((r) => setTimeout(r, 20));
   } finally {
     process.stderr.write = write;
     server.close();
     upstream.close();
   }
-  const [countTokens, stream] = lines;
+  const [countTokens, stream, gzipped] = lines;
+  assert.equal(gzipped.events, 3);
+  assert.equal(gzipped.terminal, true);
+  assert.equal(gzipped.stopReason, "tool_use");
   assert.equal(countTokens.status, 529);
   assert.equal(countTokens.errorType, "overloaded_error");
   assert.equal(countTokens.requestId, "req_011Overloaded");

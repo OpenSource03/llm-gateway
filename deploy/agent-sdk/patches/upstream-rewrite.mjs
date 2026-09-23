@@ -5,7 +5,14 @@ import https from "node:https";
 import process from "node:process";
 import { StringDecoder } from "node:string_decoder";
 import { URL } from "node:url";
-import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
+import {
+  brotliDecompressSync,
+  createBrotliDecompress,
+  createGunzip,
+  createInflate,
+  gunzipSync,
+  inflateSync,
+} from "node:zlib";
 
 // Loopback rewrite in front of api.anthropic.com for the SDK subprocesses.
 //
@@ -221,6 +228,21 @@ const decodeBody = (buffer, encoding) => {
   }
 };
 
+// Upstream SSE usually arrives compressed; the scan reads a decompressed copy
+// while the original bytes still pass through untouched.
+const streamDecoder = (encoding) => {
+  switch (String(encoding ?? "identity").toLowerCase()) {
+    case "gzip":
+      return createGunzip();
+    case "br":
+      return createBrotliDecompress();
+    case "deflate":
+      return createInflate();
+    default:
+      return undefined;
+  }
+};
+
 /** The `error.type` of an Anthropic JSON error body, never its message. */
 export function errorTypeFromBody(buffer, encoding) {
   try {
@@ -302,10 +324,15 @@ const observeUpstream = (upstreamRes, res, context, startedAt) => {
   const streaming = /text\/event-stream/i.test(
     upstreamRes.headers["content-type"] ?? "",
   );
+  const decoder = streaming ? streamDecoder(encoding) : undefined;
+  const identity = !encoding || encoding === "identity";
   const scanner =
-    streaming && (!encoding || encoding === "identity")
-      ? createStreamScanner()
-      : undefined;
+    streaming && (identity || decoder) ? createStreamScanner() : undefined;
+  if (decoder) {
+    decoder.on("data", (chunk) => scanner.push(chunk));
+    // A truncated or corrupt stream only ends the scan early.
+    decoder.on("error", () => {});
+  }
   const errorChunks = [];
   let errorBytes = 0;
   let bytes = 0;
@@ -313,7 +340,8 @@ const observeUpstream = (upstreamRes, res, context, startedAt) => {
 
   upstreamRes.on("data", (chunk) => {
     bytes += chunk.length;
-    if (scanner) scanner.push(chunk);
+    if (decoder) decoder.write(chunk);
+    else if (scanner) scanner.push(chunk);
     else if (status >= 400 && errorBytes < ERROR_BODY_LIMIT) {
       errorChunks.push(chunk);
       errorBytes += chunk.length;
@@ -345,9 +373,12 @@ const observeUpstream = (upstreamRes, res, context, startedAt) => {
     });
   };
 
-  upstreamRes.on("close", () =>
-    report(upstreamRes.complete ? "upstream_end" : "upstream_aborted"),
-  );
+  upstreamRes.on("close", () => {
+    const closedBy = upstreamRes.complete ? "upstream_end" : "upstream_aborted";
+    if (!decoder || decoder.destroyed) return report(closedBy);
+    decoder.once("close", () => report(closedBy));
+    decoder.end();
+  });
   res.on("close", () => {
     if (!res.writableFinished) report("client_closed");
   });
