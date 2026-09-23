@@ -378,7 +378,7 @@ test("each upstream call emits one structural upstream.response event", async ()
         );
         return;
       }
-      if (req.url.includes("gz=1")) {
+      if (req.url.includes("gz=")) {
         const sse =
           'event: message_start\ndata: {"type":"message_start"}\n\n' +
           'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}\n\n' +
@@ -388,9 +388,13 @@ test("each upstream call emits one structural upstream.response event", async ()
           "content-type": "text/event-stream",
           "content-encoding": "gzip",
         });
+        // gz=2 drops the gzip trailer: the content decodes but fails integrity.
+        const sent = req.url.includes("gz=2")
+          ? packed.subarray(0, packed.length - 8)
+          : packed;
         // Split mid-member so the scan must decompress incrementally.
-        res.write(packed.subarray(0, 7));
-        setTimeout(() => res.end(packed.subarray(7)), 10);
+        res.write(sent.subarray(0, 7));
+        setTimeout(() => res.end(sent.subarray(7)), 10);
         return;
       }
       res.writeHead(200, {
@@ -440,13 +444,22 @@ test("each upstream call emits one structural upstream.response event", async ()
     });
     // The client still receives the original stream.
     assert.match(await compressed.text(), /message_stop/);
+    const truncated = await fetch(base + "/v1/messages?beta=true&gz=2", {
+      method: "POST",
+      headers: { ...headers, "accept-encoding": "identity" },
+      body,
+    });
+    await truncated.arrayBuffer();
     await new Promise((r) => setTimeout(r, 20));
   } finally {
     process.stderr.write = write;
     server.close();
     upstream.close();
   }
-  const [countTokens, stream, gzipped] = lines;
+  const [countTokens, stream, gzipped, corrupt] = lines;
+  assert.equal(corrupt.terminal, undefined);
+  assert.equal(corrupt.events, undefined);
+  assert.equal(corrupt.bytes > 0, true);
   assert.equal(gzipped.events, 3);
   assert.equal(gzipped.terminal, true);
   assert.equal(gzipped.stopReason, "tool_use");
