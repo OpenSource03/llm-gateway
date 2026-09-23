@@ -176,17 +176,46 @@ const TOKEN = /^[\w.:[\]-]{1,96}$/;
 
 const safeToken = (value) =>
   typeof value === "string" && TOKEN.test(value) ? value : undefined;
+// Provider-supplied labels are logged only as known values, never verbatim.
+const ERROR_TYPES = new Set([
+  "invalid_request_error",
+  "authentication_error",
+  "billing_error",
+  "permission_error",
+  "not_found_error",
+  "request_too_large",
+  "rate_limit_error",
+  "api_error",
+  "timeout_error",
+  "overloaded_error",
+]);
+const STOP_REASONS = new Set([
+  "end_turn",
+  "max_tokens",
+  "stop_sequence",
+  "tool_use",
+  "pause_turn",
+  "refusal",
+  "model_context_window_exceeded",
+]);
+const errorTypeOf = (parsed) => {
+  const type = parsed?.error?.type;
+  if (type === undefined) return "unparsed";
+  return ERROR_TYPES.has(type) ? type : "other";
+};
+const REQUEST_ID = /^req_[A-Za-z0-9]{1,64}$/;
 const digest = (value) =>
   createHash("sha256").update(String(value)).digest("hex").slice(0, 24);
 
 const decodeBody = (buffer, encoding) => {
+  const bounded = { maxOutputLength: ERROR_BODY_LIMIT };
   switch (String(encoding ?? "").toLowerCase()) {
     case "gzip":
-      return gunzipSync(buffer);
+      return gunzipSync(buffer, bounded);
     case "br":
-      return brotliDecompressSync(buffer);
+      return brotliDecompressSync(buffer, bounded);
     case "deflate":
-      return inflateSync(buffer);
+      return inflateSync(buffer, bounded);
     default:
       return buffer;
   }
@@ -197,7 +226,7 @@ export function errorTypeFromBody(buffer, encoding) {
   try {
     const parsed = JSON.parse(decodeBody(buffer, encoding).toString("utf8"));
 
-    return safeToken(parsed?.error?.type) ?? "unparsed";
+    return errorTypeOf(parsed);
   } catch {
     return "unparsed";
   }
@@ -230,8 +259,7 @@ export function createStreamScanner() {
     if (errorNext) {
       errorNext = false;
       try {
-        summary.errorType =
-          safeToken(JSON.parse(data)?.error?.type) ?? "unparsed";
+        summary.errorType = errorTypeOf(JSON.parse(data));
       } catch {
         summary.errorType = "unparsed";
       }
@@ -240,7 +268,8 @@ export function createStreamScanner() {
     if (data.startsWith('{"type":"message_delta"')) {
       const stop = /"stop_reason":"([a-z_]{1,32})"/.exec(data);
 
-      if (stop) summary.stopReason = stop[1];
+      if (stop)
+        summary.stopReason = STOP_REASONS.has(stop[1]) ? stop[1] : "other";
     }
   };
 
@@ -303,7 +332,9 @@ const observeUpstream = (upstreamRes, res, context, startedAt) => {
     emit("upstream.response", {
       ...context,
       status,
-      requestId: safeToken(upstreamRes.headers["request-id"]),
+      requestId: REQUEST_ID.test(upstreamRes.headers["request-id"] ?? "")
+        ? upstreamRes.headers["request-id"]
+        : undefined,
       streaming,
       durationMs: Date.now() - startedAt,
       bytes,
