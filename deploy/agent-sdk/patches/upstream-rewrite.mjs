@@ -343,8 +343,10 @@ const observeUpstream = (upstreamRes, res, context, startedAt) => {
       if (decoded > SCAN_DECODED_LIMIT) stopScan();
       else scanner.push(chunk);
     });
-    // A truncated or corrupt stream only ends the scan early.
-    decoder.on("error", () => {});
+    // A truncated or corrupt stream ends the scan without scan fields.
+    decoder.on("error", () => {
+      scanStopped = true;
+    });
   }
   const errorChunks = [];
   let errorBytes = 0;
