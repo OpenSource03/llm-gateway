@@ -332,10 +332,15 @@ const observeUpstream = (upstreamRes, res, context, startedAt) => {
   const scanner =
     streaming && (identity || decoder) ? createStreamScanner() : undefined;
   let decoded = 0;
+  let scanStopped = false;
+  const stopScan = () => {
+    scanStopped = true;
+    decoder.destroy();
+  };
   if (decoder) {
     decoder.on("data", (chunk) => {
       decoded += chunk.length;
-      if (decoded > SCAN_DECODED_LIMIT) decoder.destroy();
+      if (decoded > SCAN_DECODED_LIMIT) stopScan();
       else scanner.push(chunk);
     });
     // A truncated or corrupt stream only ends the scan early.
@@ -351,7 +356,7 @@ const observeUpstream = (upstreamRes, res, context, startedAt) => {
     if (decoder) {
       if (decoder.destroyed) return;
       decoder.write(chunk);
-      if (decoder.writableLength > SCAN_BACKLOG_LIMIT) decoder.destroy();
+      if (decoder.writableLength > SCAN_BACKLOG_LIMIT) stopScan();
     } else if (scanner) scanner.push(chunk);
     else if (status >= 400 && errorBytes < ERROR_BODY_LIMIT) {
       errorChunks.push(chunk);
@@ -361,7 +366,8 @@ const observeUpstream = (upstreamRes, res, context, startedAt) => {
   const report = (closedBy) => {
     if (reported) return;
     reported = true;
-    const scan = scanner?.summary();
+    // A stopped scan saw only a prefix, so it reports no scan fields at all.
+    const scan = scanStopped ? undefined : scanner?.summary();
     const errorType =
       scan?.errorType ??
       (status >= 400 && !scanner
