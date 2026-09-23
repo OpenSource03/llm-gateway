@@ -3,6 +3,13 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.11
+
+- Bridge: `upstream.response` now reads compressed (gzip, Brotli, deflate)
+  event streams, so stop reason, terminal state and in-stream error type are
+  logged for real Anthropic traffic. The client still receives the original
+  bytes.
+
 ## 0.2.10
 
 - Bridge: a retry after a failed turn resumes the stored checkpoint when every
