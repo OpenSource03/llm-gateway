@@ -179,6 +179,9 @@ const readBody = (req) =>
 // and streamed content are never retained.
 const ERROR_BODY_LIMIT = 64 * 1024;
 const SSE_LINE_LIMIT = 16 * 1024;
+// The scan is best effort: past these bounds it stops, forwarding never does.
+const SCAN_DECODED_LIMIT = 64 * 1024 * 1024;
+const SCAN_BACKLOG_LIMIT = 1024 * 1024;
 const TOKEN = /^[\w.:[\]-]{1,96}$/;
 
 const safeToken = (value) =>
@@ -328,8 +331,13 @@ const observeUpstream = (upstreamRes, res, context, startedAt) => {
   const identity = !encoding || encoding === "identity";
   const scanner =
     streaming && (identity || decoder) ? createStreamScanner() : undefined;
+  let decoded = 0;
   if (decoder) {
-    decoder.on("data", (chunk) => scanner.push(chunk));
+    decoder.on("data", (chunk) => {
+      decoded += chunk.length;
+      if (decoded > SCAN_DECODED_LIMIT) decoder.destroy();
+      else scanner.push(chunk);
+    });
     // A truncated or corrupt stream only ends the scan early.
     decoder.on("error", () => {});
   }
@@ -340,8 +348,11 @@ const observeUpstream = (upstreamRes, res, context, startedAt) => {
 
   upstreamRes.on("data", (chunk) => {
     bytes += chunk.length;
-    if (decoder) decoder.write(chunk);
-    else if (scanner) scanner.push(chunk);
+    if (decoder) {
+      if (decoder.destroyed) return;
+      decoder.write(chunk);
+      if (decoder.writableLength > SCAN_BACKLOG_LIMIT) decoder.destroy();
+    } else if (scanner) scanner.push(chunk);
     else if (status >= 400 && errorBytes < ERROR_BODY_LIMIT) {
       errorChunks.push(chunk);
       errorBytes += chunk.length;
