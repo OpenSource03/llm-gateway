@@ -1,4 +1,5 @@
 import test from "node:test";
+import process from "node:process";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,6 +11,7 @@ import {
   rejectResumeFallback,
   safeTransportFields,
   countToolResults,
+  logTransportDiagnostic,
 } from "./session-diagnostics-runtime.mjs";
 import { patchSessionDiagnostics } from "./session-diagnostics.mjs";
 
@@ -186,4 +188,29 @@ test("tool result counting ignores text and malformed messages", () => {
     ]),
     2,
   );
+});
+
+test("mutes the default profile's auth failures but not a token profile's", () => {
+  const lines = [];
+  const write = process.stderr.write;
+  process.stderr.write = (chunk) => {
+    lines.push(String(chunk));
+    return true;
+  };
+  try {
+    logTransportDiagnostic("auth.status_failed", {
+      profile: "default",
+      error: "not logged in",
+    });
+    logTransportDiagnostic("auth.status_failed", { error: "not logged in" });
+    logTransportDiagnostic("auth.status_failed", {
+      profile: "gw-token-account",
+      error: "token expired",
+    });
+  } finally {
+    process.stderr.write = write;
+  }
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /auth\.status_failed/);
+  assert.equal(lines[0].includes("gw-token-account"), false);
 });

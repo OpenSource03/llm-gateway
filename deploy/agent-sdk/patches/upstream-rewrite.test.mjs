@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import http from "node:http";
+import process from "node:process";
 import { setTimeout } from "node:timers";
 
 const { fetch } = globalThis;
 import test from "node:test";
+import { gzipSync } from "node:zlib";
 import {
   BRIDGE_PATH_PLACEHOLDER,
   createRewriteServer,
+  createStreamScanner,
+  errorTypeFromBody,
   neutralizeBridgePaths,
   stripProxyEnvironment,
 } from "./upstream-rewrite.mjs";
@@ -284,4 +288,146 @@ test("scrubs bridge paths from replayed tool calls and keeps closing braces", ()
     ).body.messages[0].content,
     `<img>${BRIDGE_PATH_PLACEHOLDER}</img>`,
   );
+});
+
+test("stream scanner keeps stop reason and terminal state across split chunks", () => {
+  const scanner = createStreamScanner();
+  const stream =
+    'event: message_start\ndata: {"type":"message_start"}\n\n' +
+    'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"text":"say \\"stop_reason\\":\\"refusal\\" é"}}\n\n' +
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}\n\n' +
+    "event: message_stop\ndata: {}\n\n";
+  const bytes = Buffer.from(stream);
+  // Split inside the multi-byte "é" and inside an event name.
+  for (let i = 0; i < bytes.length; i += 7)
+    scanner.push(bytes.subarray(i, i + 7));
+  assert.deepEqual(scanner.summary(), {
+    events: 4,
+    terminal: true,
+    stopReason: "tool_use",
+    errorType: undefined,
+  });
+});
+
+test("stream scanner reports a mid-stream error type and skips oversized lines", () => {
+  const scanner = createStreamScanner();
+  scanner.push(
+    Buffer.from("event: content_block_delta\ndata: " + "x".repeat(40_000)),
+  );
+  scanner.push(
+    Buffer.from(
+      '"}\n\nevent: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded right now"}}\n\n',
+    ),
+  );
+  const summary = scanner.summary();
+  assert.equal(summary.errorType, "overloaded_error");
+  assert.equal(summary.terminal, false);
+  assert.equal(JSON.stringify(summary).includes("Overloaded right now"), false);
+});
+
+test("error bodies yield only the error type, including compressed ones", () => {
+  const body = JSON.stringify({
+    type: "error",
+    error: { type: "rate_limit_error", message: "secret detail" },
+  });
+  assert.equal(errorTypeFromBody(Buffer.from(body)), "rate_limit_error");
+  assert.equal(errorTypeFromBody(gzipSync(body), "gzip"), "rate_limit_error");
+  assert.equal(errorTypeFromBody(Buffer.from("<html>"), undefined), "unparsed");
+  assert.equal(
+    errorTypeFromBody(
+      Buffer.from('{"error":{"type":"has spaces and <tags>"}}'),
+      undefined,
+    ),
+    "unparsed",
+  );
+});
+
+test("each upstream call emits one structural upstream.response event", async () => {
+  const lines = [];
+  const write = process.stderr.write;
+  process.stderr.write = (chunk) => {
+    for (const line of String(chunk).split("\n")) {
+      if (line.includes('"upstream.response"')) lines.push(JSON.parse(line));
+    }
+    return true;
+  };
+  const upstream = http.createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      if (req.url.startsWith("/v1/messages/count_tokens")) {
+        res.writeHead(529, {
+          "content-type": "application/json",
+          "request-id": "req_overloaded_1",
+        });
+        res.end(
+          JSON.stringify({
+            type: "error",
+            error: { type: "overloaded_error", message: "private detail" },
+          }),
+        );
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "request-id": "req_stream_1",
+      });
+      res.write('event: message_start\ndata: {"type":"message_start"}\n\n');
+      setTimeout(
+        () =>
+          res.end(
+            'event: error\ndata: {"type":"error","error":{"type":"api_error","message":"boom"}}\n\n',
+          ),
+        10,
+      );
+    });
+  });
+  await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
+  const server = await createRewriteServer({
+    host: "127.0.0.1",
+    port: 0,
+    upstream: "http://127.0.0.1:" + upstream.address().port,
+    cwd: "/opt/meridian",
+  });
+  const base = "http://127.0.0.1:" + server.address().port;
+  try {
+    const headers = {
+      "content-type": "application/json",
+      "x-claude-code-session-id": "session-abc",
+    };
+    const body = JSON.stringify(clientBody());
+    const failed = await fetch(base + "/v1/messages/count_tokens?beta=true", {
+      method: "POST",
+      headers,
+      body,
+    });
+    await failed.text();
+    const streamed = await fetch(base + "/v1/messages?beta=true", {
+      method: "POST",
+      headers,
+      body,
+    });
+    await streamed.text();
+    await new Promise((r) => setTimeout(r, 20));
+  } finally {
+    process.stderr.write = write;
+    server.close();
+    upstream.close();
+  }
+  const [countTokens, stream] = lines;
+  assert.equal(countTokens.status, 529);
+  assert.equal(countTokens.errorType, "overloaded_error");
+  assert.equal(countTokens.requestId, "req_overloaded_1");
+  assert.equal(countTokens.path, "/v1/messages/count_tokens");
+  // Only the messages body is parsed, so only that call knows its model.
+  assert.equal(countTokens.model, undefined);
+  assert.equal(stream.model, "claude-haiku-4-5-20251001");
+  assert.equal(countTokens.session, stream.session);
+  assert.match(countTokens.session, /^[0-9a-f]{24}$/);
+  assert.equal(stream.status, 200);
+  assert.equal(stream.errorType, "api_error");
+  assert.equal(stream.terminal, false);
+  assert.equal(stream.closedBy, "upstream_end");
+  const serialized = JSON.stringify(lines);
+  for (const secret of ["private detail", "boom", "session-abc", "Primary"])
+    assert.equal(serialized.includes(secret), false);
 });
