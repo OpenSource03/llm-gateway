@@ -335,10 +335,21 @@ test("error bodies yield only the error type, including compressed ones", () => 
   assert.equal(errorTypeFromBody(Buffer.from("<html>"), undefined), "unparsed");
   assert.equal(
     errorTypeFromBody(
+      Buffer.from('{"type":"error","error":{"type":"sk-ant-api03-leaked"}}'),
+    ),
+    "other",
+  );
+  // A tiny gzip body that inflates past the diagnostic bound is not parsed.
+  assert.equal(
+    errorTypeFromBody(gzipSync(Buffer.alloc(8 * 1024 * 1024, 32)), "gzip"),
+    "unparsed",
+  );
+  assert.equal(
+    errorTypeFromBody(
       Buffer.from('{"error":{"type":"has spaces and <tags>"}}'),
       undefined,
     ),
-    "unparsed",
+    "other",
   );
 });
 
@@ -357,7 +368,7 @@ test("each upstream call emits one structural upstream.response event", async ()
       if (req.url.startsWith("/v1/messages/count_tokens")) {
         res.writeHead(529, {
           "content-type": "application/json",
-          "request-id": "req_overloaded_1",
+          "request-id": "req_011Overloaded",
         });
         res.end(
           JSON.stringify({
@@ -416,7 +427,7 @@ test("each upstream call emits one structural upstream.response event", async ()
   const [countTokens, stream] = lines;
   assert.equal(countTokens.status, 529);
   assert.equal(countTokens.errorType, "overloaded_error");
-  assert.equal(countTokens.requestId, "req_overloaded_1");
+  assert.equal(countTokens.requestId, "req_011Overloaded");
   assert.equal(countTokens.path, "/v1/messages/count_tokens");
   // Only the messages body is parsed, so only that call knows its model.
   assert.equal(countTokens.model, undefined);
