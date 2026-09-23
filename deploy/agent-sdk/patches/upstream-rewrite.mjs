@@ -1,8 +1,11 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import process from "node:process";
+import { StringDecoder } from "node:string_decoder";
 import { URL } from "node:url";
+import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 // Loopback rewrite in front of api.anthropic.com for the SDK subprocesses.
 //
@@ -164,6 +167,161 @@ const readBody = (req) =>
     req.on("error", reject);
   });
 
+// Upstream outcome diagnostics. Only structural fields are kept: status,
+// Anthropic's request id, model, stop reason and error *type*. Error messages
+// and streamed content are never retained.
+const ERROR_BODY_LIMIT = 64 * 1024;
+const SSE_LINE_LIMIT = 16 * 1024;
+const TOKEN = /^[\w.:[\]-]{1,96}$/;
+
+const safeToken = (value) =>
+  typeof value === "string" && TOKEN.test(value) ? value : undefined;
+const digest = (value) =>
+  createHash("sha256").update(String(value)).digest("hex").slice(0, 24);
+
+const decodeBody = (buffer, encoding) => {
+  switch (String(encoding ?? "").toLowerCase()) {
+    case "gzip":
+      return gunzipSync(buffer);
+    case "br":
+      return brotliDecompressSync(buffer);
+    case "deflate":
+      return inflateSync(buffer);
+    default:
+      return buffer;
+  }
+};
+
+/** The `error.type` of an Anthropic JSON error body, never its message. */
+export function errorTypeFromBody(buffer, encoding) {
+  try {
+    const parsed = JSON.parse(decodeBody(buffer, encoding).toString("utf8"));
+
+    return safeToken(parsed?.error?.type) ?? "unparsed";
+  } catch {
+    return "unparsed";
+  }
+}
+
+/** Incremental SSE scan that keeps event counts, stop reason and error type. */
+export function createStreamScanner() {
+  const decoder = new StringDecoder("utf8");
+  const summary = {
+    events: 0,
+    terminal: false,
+    stopReason: undefined,
+    errorType: undefined,
+  };
+  let carry = "";
+  let skipping = false;
+  let errorNext = false;
+  const line = (text) => {
+    if (text.startsWith("event:")) {
+      const name = text.slice(6).trim();
+
+      summary.events += 1;
+      if (name === "message_stop") summary.terminal = true;
+      errorNext = name === "error";
+      return;
+    }
+    if (!text.startsWith("data:")) return;
+    const data = text.slice(5).trimStart();
+
+    if (errorNext) {
+      errorNext = false;
+      try {
+        summary.errorType =
+          safeToken(JSON.parse(data)?.error?.type) ?? "unparsed";
+      } catch {
+        summary.errorType = "unparsed";
+      }
+      return;
+    }
+    if (data.startsWith('{"type":"message_delta"')) {
+      const stop = /"stop_reason":"([a-z_]{1,32})"/.exec(data);
+
+      if (stop) summary.stopReason = stop[1];
+    }
+  };
+
+  return {
+    push(chunk) {
+      carry += decoder.write(chunk);
+      let index;
+
+      while ((index = carry.indexOf("\n")) !== -1) {
+        const text = carry.slice(0, index).replace(/\r$/, "");
+
+        carry = carry.slice(index + 1);
+        if (skipping) skipping = false;
+        else line(text);
+      }
+      // A long content line carries nothing we keep; drop it until its end.
+      if (carry.length > SSE_LINE_LIMIT) {
+        carry = "";
+        skipping = true;
+      }
+    },
+    summary: () => ({ ...summary }),
+  };
+}
+
+/** Emit one `upstream.response` per upstream call once it ends or is cut. */
+const observeUpstream = (upstreamRes, res, context, startedAt) => {
+  const status = upstreamRes.statusCode ?? 0;
+  const encoding = upstreamRes.headers["content-encoding"];
+  const streaming = /text\/event-stream/i.test(
+    upstreamRes.headers["content-type"] ?? "",
+  );
+  const scanner =
+    streaming && (!encoding || encoding === "identity")
+      ? createStreamScanner()
+      : undefined;
+  const errorChunks = [];
+  let errorBytes = 0;
+  let bytes = 0;
+  let reported = false;
+
+  upstreamRes.on("data", (chunk) => {
+    bytes += chunk.length;
+    if (scanner) scanner.push(chunk);
+    else if (status >= 400 && errorBytes < ERROR_BODY_LIMIT) {
+      errorChunks.push(chunk);
+      errorBytes += chunk.length;
+    }
+  });
+  const report = (closedBy) => {
+    if (reported) return;
+    reported = true;
+    const scan = scanner?.summary();
+    const errorType =
+      scan?.errorType ??
+      (status >= 400 && !scanner
+        ? errorTypeFromBody(Buffer.concat(errorChunks), encoding)
+        : undefined);
+
+    emit("upstream.response", {
+      ...context,
+      status,
+      requestId: safeToken(upstreamRes.headers["request-id"]),
+      streaming,
+      durationMs: Date.now() - startedAt,
+      bytes,
+      closedBy,
+      ...(scan ? { events: scan.events, terminal: scan.terminal } : {}),
+      ...(scan?.stopReason ? { stopReason: scan.stopReason } : {}),
+      ...(errorType ? { errorType } : {}),
+    });
+  };
+
+  upstreamRes.on("close", () =>
+    report(upstreamRes.complete ? "upstream_end" : "upstream_aborted"),
+  );
+  res.on("close", () => {
+    if (!res.writableFinished) report("client_closed");
+  });
+};
+
 const errorResponse = (res, status, type, message) => {
   if (res.headersSent) {
     res.destroy();
@@ -178,7 +336,15 @@ export function createRewriteServer({ host, port, upstream, cwd }) {
   const secure = target.protocol === "https:";
   const transport = secure ? https : http;
   const agent = new transport.Agent({ keepAlive: true, maxSockets: 64 });
-  const forward = (req, res, body) => {
+  const forward = (req, res, body, model) => {
+    const startedAt = Date.now();
+    const sessionHeader = req.headers["x-claude-code-session-id"];
+    const context = {
+      method: req.method,
+      path: (req.url ?? "").split("?")[0].slice(0, 128),
+      ...(safeToken(model) ? { model } : {}),
+      ...(sessionHeader ? { session: digest(sessionHeader) } : {}),
+    };
     const headers = { ...req.headers, host: target.host };
     if (body !== undefined) headers["content-length"] = String(body.length);
     const up = transport.request(
@@ -192,11 +358,16 @@ export function createRewriteServer({ host, port, upstream, cwd }) {
       },
       (upstreamRes) => {
         res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+        observeUpstream(upstreamRes, res, context, startedAt);
         upstreamRes.pipe(res);
       },
     );
     up.on("error", (error) => {
-      emit("upstream.error", { code: error?.code ?? "UNKNOWN" });
+      emit("upstream.error", {
+        ...context,
+        code: error?.code ?? "UNKNOWN",
+        durationMs: Date.now() - startedAt,
+      });
       errorResponse(res, 502, "api_error", "Upstream request failed");
     });
     res.on("close", () => {
@@ -237,6 +408,7 @@ export function createRewriteServer({ host, port, upstream, cwd }) {
       req,
       res,
       stripped.removed || rewritten ? Buffer.from(JSON.stringify(body)) : raw,
+      parsed?.model,
     );
   });
   server.requestTimeout = 0;

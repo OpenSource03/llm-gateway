@@ -29,6 +29,14 @@ code anchors change. It provides:
 - Always-on structural transport events replacing the disabled upstream
   diagnostic logger. Fields are allowlisted; raw provider errors, stderr,
   prompts, tool inputs/results, headers, paths, and credentials are excluded.
+- `session-resilience.mjs`: a retry whose tail holds complete tool rounds past
+  the stored checkpoint resumes it (`passthrough.checkpoint_rounds_resumed`),
+  and a cancelled or failed turn inside an unpublished fork keeps the canonical
+  mapping (`passthrough.noncanonical_session_preserved`) instead of forcing a
+  full replay.
+- One `upstream.response` event per provider call from the upstream rewrite:
+  status, provider request ID, duration, bytes, close reason, event count,
+  stop reason, and error type.
 
 The Compose overlay increases the default shared `/tmp` budget from 128 MiB to
 1 GiB, adjustable with `GATEWAY_AGENT_SDK_TMPFS_SIZE`. Temporary session data

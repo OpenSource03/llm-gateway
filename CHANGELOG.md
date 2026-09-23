@@ -3,6 +3,20 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.10
+
+- Bridge: a retry after a failed turn resumes the stored checkpoint when every
+  tool round the client added since then is complete. Those rounds are replayed
+  as text in the resumed turn instead of rebuilding the whole thread.
+- Bridge: stopping or failing a turn that ran in an unpublished session fork no
+  longer drops the canonical session mapping, so the next turn resumes instead
+  of replaying the whole thread.
+- Bridge: one structural `upstream.response` event per provider call with
+  status, provider request ID, duration, bytes, how the stream ended, stop
+  reason, and error type. No bodies, headers, or prompts are logged.
+- Bridge: the container's credential-less default profile no longer logs
+  `auth.status_failed` on every health probe (new in Meridian 1.75.0).
+
 ## 0.2.9
 
 - Bridge: update Meridian from 1.71.1 to 1.75.0, which adds `claude-opus-5-5`

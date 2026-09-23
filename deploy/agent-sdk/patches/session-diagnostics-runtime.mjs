@@ -111,6 +111,14 @@ export function logTransportDiagnostic(event, extra, context) {
     ].includes(event)
   )
     return;
+  // The container's own default profile never holds credentials, and the
+  // platform /health probe re-checks it every few seconds. Profile failures
+  // for real token profiles stay visible.
+  if (
+    event === "auth.status_failed" &&
+    (extra?.profile ?? "default") === "default"
+  )
+    return;
   if (typeof event !== "string" || !/^[a-z][a-z0-9_.-]{0,95}$/.test(event))
     return;
   emitDiagnostic("transport." + event, safeTransportFields(extra, context));
