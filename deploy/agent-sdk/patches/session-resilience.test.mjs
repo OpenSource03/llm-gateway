@@ -68,7 +68,7 @@ test("resumes a retry that carries calls forwarded by a failed turn", () => {
       role: "assistant",
       content: [{ type: "text", text: "Next." }, call("toolu_y")],
     },
-    { role: "user", content: [result("toolu_y", "")] },
+    { role: "user", content: [result("toolu_y", "\n")] },
   ]);
 
   assert.equal(settled.receivedToolResults, 2);
@@ -78,8 +78,8 @@ test("resumes a retry that carries calls forwarded by a failed turn", () => {
   assert.deepEqual(first, result("toolu_x"));
   assert.ok(replayed.every((block) => block.type === "text"));
   assert.match(replayed[0].text, /^\[Assistant: Next\.\nPreviously called/);
-  // Empty tool output would otherwise become an empty text block.
-  assert.ok(replayed.every((block) => block.text.length > 0));
+  // Blank tool output would otherwise become a whitespace-only text block.
+  assert.ok(replayed.every((block) => block.text.trim().length > 0));
 });
 
 test("accepts several settled rounds and a trailing user message", () => {
@@ -145,6 +145,15 @@ test("replays when the extra rounds could break tool lineage", () => {
       { role: "system", content: "reminder" },
     ],
     "no new round": [echoX, resultX],
+    "tool_reference inside a later result": [
+      echoX,
+      resultX,
+      y,
+      {
+        role: "user",
+        content: [result("toolu_y", [{ type: "tool_reference", name: "x" }])],
+      },
+    ],
   };
   for (const [label, messages] of Object.entries(unsafe))
     assert.equal(settle(messages), undefined, label);
@@ -154,7 +163,7 @@ const fixture = `function coalesceCompleteToolResultContinuation(messages, expec
   return exactStub(messages, expectedIds, options);
 }
 function evictionSites(state) {
-  let { managedForkTarget, managedForkPublished, managedForkSuperseded, currentSessionId, options, exitedBeforeCanonicalTerminal, checkpointTurn, earlyStopFired, sawCanonicalResult, mustEvictBeforeRecoveredTerminal, isIndependentSession, passthrough, streamedToolUseIds, recoverableCheckpoint } = state;
+  let { managedForkTarget, managedForkPublished, managedForkSuperseded, currentSessionId, options, exitedBeforeCanonicalTerminal, checkpointTurn, earlyStopFired, sawCanonicalResult, mustEvictBeforeRecoveredTerminal, isIndependentSession, passthrough, streamedToolUseIds, recoverableCheckpoint, passthroughToolCallAssistantUuid } = state;
   const events = [];
   const evictSession2 = () => { events.push("evicted"); return true; };
   const claudeLog = (event) => events.push(event);
@@ -232,6 +241,7 @@ const cancelled = {
   passthrough: true,
   streamedToolUseIds: new Set(["toolu_y"]),
   recoverableCheckpoint: false,
+  passthroughToolCallAssistantUuid: "checkpoint",
 };
 
 test("keeps the canonical mapping while an unpublished fork held the turn", () => {
@@ -251,6 +261,18 @@ test("keeps the canonical mapping while an unpublished fork held the turn", () =
       "passthrough.noncanonical_session_preserved",
     ],
   );
+  // Stopped before any tool call reached the client: nothing to anchor.
+  assert.deepEqual(
+    [
+      ...evictionSites({
+        ...cancelled,
+        streamedToolUseIds: new Set(),
+        checkpointTurn: false,
+        passthroughToolCallAssistantUuid: undefined,
+      }),
+    ],
+    ["passthrough.noncanonical_session_preserved"],
+  );
 });
 
 test("still evicts when the canonical session may have advanced", () => {
@@ -261,6 +283,10 @@ test("still evicts when the canonical session may have advanced", () => {
     "fork superseded by a fresh fallback": { managedForkSuperseded: true },
     "SDK returned another session": { currentSessionId: "source" },
     "priority publication": { options: { priorityPublication: {} } },
+    // A resume without a checkpoint would drop the call the client received.
+    "client got a call with no checkpoint to anchor it": {
+      passthroughToolCallAssistantUuid: undefined,
+    },
   };
   for (const [label, change] of Object.entries(advanced))
     assert.deepEqual(

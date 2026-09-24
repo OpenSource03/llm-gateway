@@ -3,6 +3,18 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.12
+
+- Bridge: a stopped or failed turn keeps the session mapping only when the
+  client saw no tool call from it, or a stored checkpoint anchors that call.
+  Otherwise the next turn replays in full, as before, instead of resuming
+  without the call it answers.
+- Bridge: the settled-rounds resume falls back to a full replay when a later
+  tool result holds anything but text or images, and drops whitespace-only
+  replay text.
+- Bridge: the upstream stream scan stops at 64 MiB decoded or a 1 MiB backlog
+  and omits its fields when it stops early or the stream fails to decompress.
+
 ## 0.2.11
 
 - Bridge: `upstream.response` now reads compressed (gzip, Brotli, deflate)
