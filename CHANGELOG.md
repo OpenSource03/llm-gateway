@@ -3,6 +3,20 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.13
+
+- Codex images for Claude models are fitted within 2000 px per side before
+  dispatch. Screenshots returned by Codex tools skipped Claude Code's own
+  resize, so a thread's 21st image made Anthropic reject every request with
+  the many-image limit; Claude Code then stripped the images and the model
+  stopped seeing new screenshots.
+- Images over 2000 px or 256 KB are re-encoded as WebP (about a quarter of a
+  PNG screenshot), deterministically so the prompt cache survives. When a
+  request would still exceed 24 MB of images or 100 images, the oldest are
+  replaced by a note in groups of 20.
+- Inline images are typed by their bytes, so a generic
+  `application/octet-stream` data URL no longer fails the request.
+
 ## 0.2.12
 
 - Bridge: a stopped or failed turn keeps the session mapping only when the

@@ -96,14 +96,18 @@ const codexImageBlock = (
   content: Record<string, unknown>,
 ): AnthropicContentBlock => {
   const imageUrl = requiredString(content.image_url, "input_image.image_url");
-  const data = /^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/is.exec(
-    imageUrl,
-  );
+  // Codex may label inline images generically (application/octet-stream);
+  // fitRequestImages sets the type from the bytes before dispatch.
+  const data = /^data:([^;,]*);base64,(.+)$/is.exec(imageUrl);
 
   if (data) {
     return {
       type: "image",
-      source: { type: "base64", media_type: data[1], data: data[2] },
+      source: {
+        type: "base64",
+        media_type: (data[1] ?? "").toLowerCase(),
+        data: data[2]!,
+      },
     };
   }
   const url = new URL(imageUrl);

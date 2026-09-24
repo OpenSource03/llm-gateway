@@ -30,3 +30,11 @@ code is included. Its reviewed repository contains an MIT license.
 architecture references for Google Antigravity OAuth, managed-project,
 catalog, quota, and streaming behavior. No source from either project is
 vendored. Both reviewed repositories contain MIT license files.
+
+## sharp and libvips
+
+The gateway runtime depends on `sharp` (Apache-2.0) to fit Codex image inputs
+within provider limits. `sharp` installs a prebuilt `libvips` binary through
+the `@img/sharp-libvips-*` packages, licensed LGPL-3.0-or-later; the shared
+library is dynamically linked and ships unmodified with its license in the
+image's `node_modules`.

@@ -42,6 +42,7 @@ import {
   collapseAntigravityEffortVariants,
   selectAntigravityUpstreamModel,
 } from "./antigravity-model-routing";
+import { fitRequestImages } from "../images/fit-images";
 
 export const ANTIGRAVITY_ENDPOINTS = {
   authorize: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -441,9 +442,10 @@ export function createAntigravityProviderAdapter(
         model: upstreamModel,
         maxOutputTokens: Math.max(1, input.projectedOutputTokens ?? 64_000),
       });
+      const request = await fitRequestImages(converted.request);
       const sessionId = normalizeSessionId(input.sessionId, deps.randomUUID());
       const rewritten = buildAntigravityRequest({
-        request: converted.request,
+        request,
         upstreamModel,
         projectId: projectIdFromSecret(input.secret),
         sessionId,
