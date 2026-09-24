@@ -27,6 +27,7 @@ export function gwCoalesceSettledToolRounds(
     "redacted_thinking",
   ]);
   const userBlocks = new Set(["text", "image", "document"]);
+  const resultBlocks = new Set(["text", "image"]);
   if (!Array.isArray(messages) || expectedIds.length === 0) return undefined;
   let split = -1;
   let sawUser = false;
@@ -70,6 +71,13 @@ export function gwCoalesceSettledToolRounds(
           return undefined;
         if (block.type !== "tool_result") continue;
         if (!pending.delete(block.tool_use_id)) return undefined;
+        // Other nested blocks (tool_reference) are only valid inside a native
+        // tool_result, and replay would hoist them to the top level.
+        if (
+          Array.isArray(block.content) &&
+          !block.content.every((part) => resultBlocks.has(part?.type))
+        )
+          return undefined;
         receivedToolResults++;
       }
     } else return undefined;
@@ -94,13 +102,13 @@ export function gwCoalesceSettledToolRounds(
       );
     }
   }
-  // The Messages API rejects empty text blocks; empty tool output flattens to one.
+  // The Messages API rejects blank text blocks; empty tool output flattens to one.
   const content = [
     ...head[0].content,
     ...replayed.filter(
       (block) =>
         block?.type !== "text" ||
-        (typeof block.text === "string" && block.text.length > 0),
+        (typeof block.text === "string" && block.text.trim().length > 0),
     ),
   ];
   return { messages: [{ role: "user", content }], receivedToolResults };
@@ -119,8 +127,10 @@ export function patchSessionResilience(source) {
   // The durable mapping still names the canonical source while an unpublished
   // managed fork holds the turn: the SDK wrote only to the fork. Evicting it
   // turns a cancelled or failed turn into a full-history replay.
+  // A resume without a checkpoint drops assistant turns from the tail, so a
+  // tool call the client already received needs a checkpoint to anchor it.
   const preserveCanonicalSource =
-    "Boolean(managedForkTarget) && !managedForkPublished && !managedForkSuperseded && !options.priorityPublication && (currentSessionId === undefined || currentSessionId === managedForkTarget.sessionId)";
+    "Boolean(managedForkTarget) && !managedForkPublished && !managedForkSuperseded && !options.priorityPublication && (currentSessionId === undefined || currentSessionId === managedForkTarget.sessionId) && (streamedToolUseIds.size === 0 || Boolean(passthroughToolCallAssistantUuid))";
 
   // Bug A: a retry carrying rounds the checkpoint never recorded replayed everything.
   replace(
