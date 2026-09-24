@@ -33,8 +33,8 @@ const inlineImageDimensions = (imageUrl: string): ImageDimensions | null => {
   if (comma < 0) return null;
   const header = imageUrl.slice(0, comma).toLowerCase();
 
-  if (!header.startsWith("data:image/") || !header.endsWith(";base64"))
-    return null;
+  // Codex may label inline images generically; the bytes decide.
+  if (!header.startsWith("data:") || !header.endsWith(";base64")) return null;
 
   return imageDimensions(Buffer.from(imageUrl.slice(comma + 1), "base64"));
 };

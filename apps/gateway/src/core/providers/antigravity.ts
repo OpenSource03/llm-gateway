@@ -442,7 +442,7 @@ export function createAntigravityProviderAdapter(
         model: upstreamModel,
         maxOutputTokens: Math.max(1, input.projectedOutputTokens ?? 64_000),
       });
-      const request = await fitRequestImages(converted.request);
+      const request = await fitRequestImages(converted.request, input.signal);
       const sessionId = normalizeSessionId(input.sessionId, deps.randomUUID());
       const rewritten = buildAntigravityRequest({
         request,

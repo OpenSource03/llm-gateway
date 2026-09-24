@@ -43,6 +43,8 @@ type FittedImage =
 
 export const UNREADABLE_IMAGE_TEXT =
   "[Image omitted by the gateway: it is not a readable PNG, JPEG, GIF or WebP image.]";
+export const TOO_LARGE_IMAGE_TEXT =
+  "[Image omitted by the gateway: it stays over the provider's per-image size limit after resizing.]";
 export const OMITTED_FOR_SIZE_TEXT =
   "[Earlier image omitted by the gateway to keep the request within the provider's size limits.]";
 
@@ -54,6 +56,11 @@ const cacheSize = (value: FittedImage): number =>
   value.kind === "image" ? value.data.length : 0;
 
 const remember = (key: string, value: FittedImage): void => {
+  const previous = cache.get(key);
+  if (previous) {
+    cache.delete(key);
+    cachedBytes -= cacheSize(previous);
+  }
   cache.set(key, value);
   cachedBytes += cacheSize(value);
   for (const [oldest, entry] of cache) {
@@ -76,16 +83,22 @@ const recall = (key: string): FittedImage | undefined => {
 let activeResizes = 0;
 const waiting: Array<() => void> = [];
 const withResizeSlot = async <T>(work: () => Promise<T>): Promise<T> => {
+  // A finishing resize hands its slot straight to the next waiter.
   if (activeResizes >= MAX_CONCURRENT_RESIZES)
     await new Promise<void>((resolve) => waiting.push(resolve));
-  activeResizes += 1;
+  else activeResizes += 1;
   try {
     return await work();
   } finally {
-    activeResizes -= 1;
-    waiting.shift()?.();
+    const next = waiting.shift();
+    if (next) next();
+    else activeResizes -= 1;
   }
 };
+// Concurrent requests for the same screenshot share one encode.
+const inFlight = new Map<string, Promise<FittedImage>>();
+
+class ImageTooLargeError extends Error {}
 
 const encode = async (input: Buffer): Promise<Buffer> => {
   const fitted = () =>
@@ -103,10 +116,32 @@ const encode = async (input: Buffer): Promise<Buffer> => {
       })
       .timeout({ seconds: RESIZE_TIMEOUT_SECONDS });
   const webp = await fitted().webp({ quality: 85 }).toBuffer();
+  if (webp.length <= MAX_IMAGE_BYTES) return webp;
+  const smaller = await fitted().webp({ quality: 60 }).toBuffer();
+  if (smaller.length <= MAX_IMAGE_BYTES) return smaller;
+  throw new ImageTooLargeError();
+};
 
-  return webp.length <= MAX_IMAGE_BYTES
-    ? webp
-    : fitted().webp({ quality: 60 }).toBuffer();
+const encodeFitted = async (data: string): Promise<FittedImage> => {
+  try {
+    const output = await withResizeSlot(() =>
+      encode(Buffer.from(data, "base64")),
+    );
+
+    return {
+      kind: "image",
+      mediaType: "image/webp",
+      data: output.toString("base64"),
+    };
+  } catch (error) {
+    return {
+      kind: "omitted",
+      reason:
+        error instanceof ImageTooLargeError
+          ? TOO_LARGE_IMAGE_TEXT
+          : UNREADABLE_IMAGE_TEXT,
+    };
+  }
 };
 
 // 64 KiB of image bytes: enough for every format's header in practice.
@@ -139,24 +174,18 @@ const fitBase64 = async (
   const cached = recall(key);
 
   if (cached) return cached;
-  let fitted: FittedImage;
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+  const work = encodeFitted(data)
+    .then((fitted) => {
+      remember(key, fitted);
+      return fitted;
+    })
+    .finally(() => inFlight.delete(key));
 
-  try {
-    const output = await withResizeSlot(() =>
-      encode(Buffer.from(data, "base64")),
-    );
+  inFlight.set(key, work);
 
-    fitted = {
-      kind: "image",
-      mediaType: "image/webp",
-      data: output.toString("base64"),
-    };
-  } catch {
-    fitted = { kind: "omitted", reason: UNREADABLE_IMAGE_TEXT };
-  }
-  remember(key, fitted);
-
-  return fitted;
+  return work;
 };
 
 const fitImageBlock = async (
@@ -182,17 +211,26 @@ const isToolResultBlock = (
   block: AnthropicContentBlock,
 ): block is AnthropicToolResultBlock => block.type === "tool_result";
 
+type ImageMapper = (
+  block: AnthropicImageBlock,
+) => Promise<AnthropicContentBlock>;
+
 const mapBlocks = async (
   blocks: AnthropicContentBlock[],
-  map: (block: AnthropicImageBlock) => Promise<AnthropicContentBlock>,
+  map: ImageMapper,
+  signal: AbortSignal | undefined,
 ): Promise<AnthropicContentBlock[]> => {
   const mapped: AnthropicContentBlock[] = [];
 
   // Sequential on purpose: each resize may hold a large decoded bitmap.
   for (const block of blocks) {
+    signal?.throwIfAborted();
     if (isImageBlock(block)) mapped.push(await map(block));
     else if (isToolResultBlock(block) && Array.isArray(block.content))
-      mapped.push({ ...block, content: await mapBlocks(block.content, map) });
+      mapped.push({
+        ...block,
+        content: await mapBlocks(block.content, map, signal),
+      });
     else mapped.push(block);
   }
   return mapped;
@@ -200,7 +238,8 @@ const mapBlocks = async (
 
 const mapImages = async (
   request: AnthropicMessagesRequest,
-  map: (block: AnthropicImageBlock) => Promise<AnthropicContentBlock>,
+  map: ImageMapper,
+  signal: AbortSignal | undefined,
 ): Promise<AnthropicMessagesRequest> => {
   const messages: AnthropicMessagesRequest["messages"] = [];
 
@@ -208,7 +247,10 @@ const mapImages = async (
     messages.push(
       typeof message.content === "string"
         ? message
-        : { ...message, content: await mapBlocks(message.content, map) },
+        : {
+            ...message,
+            content: await mapBlocks(message.content, map, signal),
+          },
     );
   return { ...request, messages };
 };
@@ -239,24 +281,33 @@ export const imagesToOmit = (sizes: number[]): number => {
 /** Fits every inline image within the provider's per-image and request limits. */
 export const fitRequestImages = async (
   request: AnthropicMessagesRequest,
+  signal?: AbortSignal,
 ): Promise<AnthropicMessagesRequest> => {
   const sizes: number[] = [];
-  const fitted = await mapImages(request, async (block) => {
-    const result = await fitImageBlock(block);
-    if (isImageBlock(result)) sizes.push(inlineBytes(result));
-    return result;
-  });
+  const fitted = await mapImages(
+    request,
+    async (block) => {
+      const result = await fitImageBlock(block);
+      if (isImageBlock(result)) sizes.push(inlineBytes(result));
+      return result;
+    },
+    signal,
+  );
   const omit = imagesToOmit(sizes);
 
   if (omit === 0) return fitted;
   let seen = 0;
 
-  return mapImages(fitted, async (block) =>
-    seen++ < omit ? { type: "text", text: OMITTED_FOR_SIZE_TEXT } : block,
+  return mapImages(
+    fitted,
+    async (block) =>
+      seen++ < omit ? { type: "text", text: OMITTED_FOR_SIZE_TEXT } : block,
+    signal,
   );
 };
 
 export const resetFittedImageCache = (): void => {
   cache.clear();
+  inFlight.clear();
   cachedBytes = 0;
 };
