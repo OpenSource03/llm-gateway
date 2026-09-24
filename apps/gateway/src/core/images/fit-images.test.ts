@@ -9,6 +9,8 @@ import type {
   AnthropicToolResultBlock,
 } from "../wire/anthropic";
 import { codexToAnthropic } from "../translate/codex-to-anthropic";
+import { estimateGatewayResponsesInputTokens } from "../data-plane/token-estimation";
+import type { CodexResponsesRequest } from "../wire/codex-responses";
 import { imageDimensions } from "./image-format";
 import {
   MAX_IMAGE_BYTES,
@@ -235,4 +237,56 @@ test("dropped images leave a note in place of the oldest ones", async () => {
   assert.deepEqual(content[19], { type: "text", text: OMITTED_FOR_SIZE_TEXT });
   assert.equal(content[20], tiny);
   assert.equal(content.filter((block) => block.type === "image").length, 81);
+});
+
+test("fitting stops when the request is aborted", async () => {
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    fitRequestImages(
+      toolResultRequest(image(await png(3_000, 3_000))),
+      controller.signal,
+    ),
+    { name: "AbortError" },
+  );
+});
+
+test("concurrent requests for one screenshot share a single result", async () => {
+  resetFittedImageCache();
+  const shot = image(await png(3_200, 1_800));
+  const [a, b] = await Promise.all([
+    fitRequestImages(toolResultRequest(shot)),
+    fitRequestImages(toolResultRequest(shot)),
+  ]);
+
+  assert.deepEqual(resultBlocks(a), resultBlocks(b));
+});
+
+test("generically labelled images are costed from their real size", async () => {
+  const bytes = await png(400, 300);
+  const request = {
+    model: "anthropic/claude-opus-5-5",
+    instructions: "",
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_image",
+            image_url: `data:application/octet-stream;base64,${bytes.toString("base64")}`,
+          },
+        ],
+      },
+    ],
+    tool_choice: "auto",
+    parallel_tool_calls: false,
+    include: [],
+    stream: true,
+    store: false,
+  } satisfies CodexResponsesRequest;
+
+  // The unknown-image fallback charges 10,000 tokens; a 400x300 image is far less.
+  assert.ok(estimateGatewayResponsesInputTokens(request).approximate < 1_000);
 });

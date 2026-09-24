@@ -282,7 +282,7 @@ export function createAnthropicProviderAdapter(
         model: input.upstreamModel,
         maxOutputTokens: Math.max(1, input.projectedOutputTokens ?? 64_000),
       });
-      const request = await fitRequestImages(converted.request);
+      const request = await fitRequestImages(converted.request, input.signal);
       const requestId = deps.randomUUID();
       const rewritten = rewriteClaudeCodeRequest({
         request,

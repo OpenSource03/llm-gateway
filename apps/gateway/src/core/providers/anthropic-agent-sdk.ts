@@ -588,7 +588,7 @@ export class AnthropicAgentSdkTransport {
       model: input.upstreamModel,
       maxOutputTokens: Math.max(1, input.projectedOutputTokens ?? 64_000),
     });
-    const request = await fitRequestImages(converted.request);
+    const request = await fitRequestImages(converted.request, input.signal);
     // `prompt_cache_key` is shared by Codex parents and subagents. The gateway
     // supplies a thread-scoped session ID so concurrent Agent SDK sessions stay
     // independent without giving up shared prompt-cache affinity upstream.
