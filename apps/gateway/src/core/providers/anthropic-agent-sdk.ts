@@ -32,6 +32,7 @@ import {
   providerModelId,
   quotaStatus,
 } from "./shared";
+import { fitRequestImages } from "../images/fit-images";
 
 const TRANSPORT_ID = "agent-sdk";
 const PROFILE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -587,6 +588,7 @@ export class AnthropicAgentSdkTransport {
       model: input.upstreamModel,
       maxOutputTokens: Math.max(1, input.projectedOutputTokens ?? 64_000),
     });
+    const request = await fitRequestImages(converted.request);
     // `prompt_cache_key` is shared by Codex parents and subagents. The gateway
     // supplies a thread-scoped session ID so concurrent Agent SDK sessions stay
     // independent without giving up shared prompt-cache affinity upstream.
@@ -613,7 +615,7 @@ export class AnthropicAgentSdkTransport {
       init: {
         method: "POST",
         headers,
-        body: JSON.stringify(converted.request),
+        body: JSON.stringify(request),
         signal: input.signal,
         redirect: "error",
       },

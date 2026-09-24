@@ -12,6 +12,11 @@ on:
         required: true
         default: true
         type: boolean
+      update_agent_sdk:
+        description: Also move the Agent SDK bridge to this commit (restarting it resets every open bridge session)
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -220,7 +225,7 @@ jobs:
           done
 
       - name: Update the private Agent SDK bridge image
-        if: inputs.deploy && env.GATEWAY_AGENT_SDK_APP != ''
+        if: inputs.deploy && inputs.update_agent_sdk && env.GATEWAY_AGENT_SDK_APP != ''
         env:
           AGENT_SDK_IMAGE: ${{ steps.images.outputs.agentsdk }}
         run: |

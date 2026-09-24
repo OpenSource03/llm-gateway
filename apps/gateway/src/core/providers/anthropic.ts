@@ -36,6 +36,7 @@ import {
   providerModelId,
   quotaStatus,
 } from "./shared";
+import { fitRequestImages } from "../images/fit-images";
 
 export const ANTHROPIC_ENDPOINTS = {
   authorize: "https://claude.com/cai/oauth/authorize",
@@ -281,9 +282,10 @@ export function createAnthropicProviderAdapter(
         model: input.upstreamModel,
         maxOutputTokens: Math.max(1, input.projectedOutputTokens ?? 64_000),
       });
+      const request = await fitRequestImages(converted.request);
       const requestId = deps.randomUUID();
       const rewritten = rewriteClaudeCodeRequest({
-        request: converted.request,
+        request,
         upstreamModel: input.upstreamModel,
         identity: input.identity,
         accessToken: input.secret.accessToken,
