@@ -9,7 +9,7 @@ param addressPrefix string
 @description('App Service VNet integration subnet, delegated to Microsoft.Web/serverFarms.')
 param appServiceSubnetPrefix string
 param privateEndpointSubnetPrefix string
-@description('Container Apps job subnet, delegated to Microsoft.App/environments.')
+@description('Container Apps job subnet, delegated to Microsoft.App/environments; at least a /27.')
 param containerAppsSubnetPrefix string
 
 param appServicePlanName string
@@ -38,40 +38,48 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   tags: tags
   properties: {
     addressSpace: { addressPrefixes: [addressPrefix] }
-    subnets: [
+  }
+}
+
+// Child resources, so a redeploy never removes subnets added outside this template.
+// Azure updates one subnet of a VNet at a time.
+resource appServiceSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' = {
+  parent: vnet
+  name: 'snet-appservice'
+  properties: {
+    addressPrefix: appServiceSubnetPrefix
+    delegations: [
       {
-        name: 'snet-appservice'
-        properties: {
-          addressPrefix: appServiceSubnetPrefix
-          delegations: [
-            {
-              name: 'appservice'
-              properties: { serviceName: 'Microsoft.Web/serverFarms' }
-            }
-          ]
-        }
-      }
-      {
-        name: 'snet-private-endpoints'
-        properties: {
-          addressPrefix: privateEndpointSubnetPrefix
-          privateEndpointNetworkPolicies: 'Disabled'
-        }
-      }
-      {
-        name: 'snet-container-apps'
-        properties: {
-          addressPrefix: containerAppsSubnetPrefix
-          delegations: [
-            {
-              name: 'containerapps'
-              properties: { serviceName: 'Microsoft.App/environments' }
-            }
-          ]
-        }
+        name: 'appservice'
+        properties: { serviceName: 'Microsoft.Web/serverFarms' }
       }
     ]
   }
+}
+
+resource privateEndpointSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' = {
+  parent: vnet
+  name: 'snet-private-endpoints'
+  properties: {
+    addressPrefix: privateEndpointSubnetPrefix
+    privateEndpointNetworkPolicies: 'Disabled'
+  }
+  dependsOn: [appServiceSubnet]
+}
+
+resource containerAppsSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' = {
+  parent: vnet
+  name: 'snet-container-apps'
+  properties: {
+    addressPrefix: containerAppsSubnetPrefix
+    delegations: [
+      {
+        name: 'containerapps'
+        properties: { serviceName: 'Microsoft.App/environments' }
+      }
+    ]
+  }
+  dependsOn: [privateEndpointSubnet]
 }
 
 resource postgresDnsZone 'Microsoft.Network/privateDnsZones@2024-06-01' = {
@@ -107,7 +115,7 @@ resource jobEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   tags: tags
   properties: {
     vnetConfiguration: {
-      infrastructureSubnetId: vnet.properties.subnets[2].id
+      infrastructureSubnetId: containerAppsSubnet.id
       internal: true
     }
     appLogsConfiguration: {
@@ -125,8 +133,8 @@ resource jobEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
 }
 
 output virtualNetworkId string = vnet.id
-output appServiceSubnetId string = vnet.properties.subnets[0].id
-output privateEndpointSubnetId string = vnet.properties.subnets[1].id
+output appServiceSubnetId string = appServiceSubnet.id
+output privateEndpointSubnetId string = privateEndpointSubnet.id
 output postgresPrivateDnsZoneId string = postgresDnsZone.id
 output appServicePlanId string = plan.id
 output containerAppsEnvironmentId string = jobEnvironment.id
