@@ -70,6 +70,18 @@ encrypted rows. Pass the nonsecret `keyUriWithVersion` output to the runtime and
 do not substitute a versionless key URL. Purge protection cannot be disabled
 once enabled.
 
+## Moving to a new vault
+
+Key Vault backups cannot be restored into another Azure geography. To move an
+installation, restore its database into the new foundation and confirm the
+restored rows hold exactly one distinct `keyWrapperId`. Then run
+`rewrap-keys --from-key-id <that exact URL>` once, with
+`GATEWAY_AZURE_KEY_VAULT_KEY_ID` set to the new key. Its identity needs unwrap
+on the old key and wrap on the new one. The command fails while any row is
+still on another key; remove the old-key grant only after it succeeds. Copy
+`session-hmac` unchanged so sticky session routing keeps matching the stored
+session hashes.
+
 ## Optional App Service DNS zone
 
 When the VNet already uses `privatelink.azurewebsites.net`, leave

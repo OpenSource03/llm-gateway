@@ -290,15 +290,21 @@ program
     throw new Error("Provider authentication expired before completion");
   });
 
-program.command("rewrap-keys").action(async () => {
-  usedLocalDatabase = true;
-  const { rewrapGatewayKeys } = await import("./core/security/rewrap");
-  const result = await rewrapGatewayKeys();
+program
+  .command("rewrap-keys")
+  .option(
+    "--from-key-id <url>",
+    "Also unwrap rows held by this exact key from another vault",
+  )
+  .action(async (options: { fromKeyId?: string }) => {
+    usedLocalDatabase = true;
+    const { rewrapGatewayKeys } = await import("./core/security/rewrap");
+    const result = await rewrapGatewayKeys(options);
 
-  process.stdout.write(
-    `Rewrapped ${result.credentials} credential(s) and ${result.oauthAttempts} OAuth attempt(s) to ${result.keyWrapperId}\n`,
-  );
-});
+    process.stdout.write(
+      `Rewrapped ${result.credentials} credential(s) and ${result.oauthAttempts} OAuth attempt(s) to ${result.keyWrapperId}\n`,
+    );
+  });
 
 void program
   .parseAsync(process.argv)

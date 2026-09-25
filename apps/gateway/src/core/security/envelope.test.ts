@@ -15,6 +15,8 @@ import test from "node:test";
 import {
   decryptEnvelope,
   encryptEnvelope,
+  assertAllowedHistoricalKeyId,
+  assertCanonicalVersionedKeyId,
   assertCompatibleHistoricalKeyId,
   LocalRsaKeyWrapper,
   rewrapEnvelopeDataKey,
@@ -46,6 +48,70 @@ test("historical key IDs may change only the configured key version", () => {
     assertCompatibleHistoricalKeyId(
       "https://gateway-vault.vault.azure.net/keys/credentials/version-2",
       "https://gateway-vault.vault.azure.net/keys/credentials/version-1?x=1",
+    ),
+  );
+});
+
+test("a migration source allows exactly one key from another vault", () => {
+  const configured = "https://new-vault.vault.azure.net/keys/gateway/version-2";
+  const source = "https://old-vault.vault.azure.net/keys/gateway/version-1";
+
+  assert.doesNotThrow(() =>
+    assertAllowedHistoricalKeyId(configured, source, source),
+  );
+  assert.doesNotThrow(() =>
+    assertAllowedHistoricalKeyId(
+      configured,
+      "https://new-vault.vault.azure.net/keys/gateway/version-1",
+      source,
+    ),
+  );
+  assert.throws(() => assertAllowedHistoricalKeyId(configured, source));
+  assert.throws(() =>
+    assertAllowedHistoricalKeyId(
+      configured,
+      "https://old-vault.vault.azure.net/keys/gateway/version-0",
+      source,
+    ),
+  );
+  assert.throws(() =>
+    assertAllowedHistoricalKeyId(
+      configured,
+      "https://attacker-vault.vault.azure.net/keys/gateway/version-1",
+      source,
+    ),
+  );
+  assert.throws(() =>
+    assertAllowedHistoricalKeyId(
+      configured,
+      "https://old-vault.example.com/keys/gateway/version-1",
+      "https://old-vault.example.com/keys/gateway/version-1",
+    ),
+  );
+});
+
+test("a migration source key must use Azure's exact key URL form", () => {
+  assert.doesNotThrow(() =>
+    assertCanonicalVersionedKeyId(
+      "https://old-vault.vault.azure.net/keys/gateway/version-1",
+    ),
+  );
+  for (const variant of [
+    "https://old-vault.vault.azure.net/keys/gateway/version-1/",
+    "https://old-vault.vault.azure.net//keys/gateway/version-1",
+    "https://old-vault.vault.azure.net:443/keys/gateway/version-1",
+    "https://old-vault.vault.azure.net/keys/gateway/version-1?",
+    "https://old-vault.vault.azure.net/keys/gateway/version-1#",
+    "https://OLD-vault.vault.azure.net/keys/gateway/version-1",
+    "https://old-vault.vault.azure.net/keys/gateway",
+  ]) {
+    assert.throws(() => assertCanonicalVersionedKeyId(variant), variant);
+  }
+  assert.throws(() =>
+    assertAllowedHistoricalKeyId(
+      "https://new-vault.vault.azure.net/keys/gateway/version-2",
+      "https://old-vault.vault.azure.net/keys/gateway/version-1/",
+      "https://old-vault.vault.azure.net/keys/gateway/version-1/",
     ),
   );
 });
