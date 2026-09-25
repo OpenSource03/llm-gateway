@@ -70,6 +70,9 @@ param agentSdkApiKey string = ''
 @description('Bounded JSON array of external bridge catalog corrections.')
 param agentSdkModelRewritesJson string = '[]'
 
+@description('Codex version reported to OpenAI: auto follows the newest stable release; an exact version pins it.')
+param codexClientVersion string = 'auto'
+
 @description('Optional globally unique name for the private Agent SDK bridge app on the same plan; empty deploys no bridge.')
 @maxLength(60)
 param agentSdkAppName string = ''
@@ -118,6 +121,7 @@ var commonSettings = concat([
   { name: 'GATEWAY_SESSION_HMAC_SECRET', value: sessionHmacSecret }
   { name: 'GATEWAY_KEY_WRAPPER', value: 'azure-key-vault' }
   { name: 'GATEWAY_AZURE_KEY_VAULT_KEY_ID', value: keyVaultKeyId }
+  { name: 'GATEWAY_CODEX_CLIENT_VERSION', value: codexClientVersion }
   { name: 'AZURE_MANAGED_IDENTITY_CLIENT_ID', value: managedIdentityClientId }
   { name: 'GATEWAY_PUBLIC_URL', value: publicBaseUrl }
   { name: 'DOCKER_REGISTRY_SERVER_URL', value: 'https://${acrLoginServer}' }

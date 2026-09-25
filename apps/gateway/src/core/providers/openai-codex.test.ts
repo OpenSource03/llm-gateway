@@ -5,6 +5,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createCodexClientVersionSource,
+  fixedCodexClientVersion,
+} from "./codex-client-version";
+import {
   OPENAI_CODEX_ENDPOINTS,
   createOpenAICodexProviderAdapter,
   parseCodexCatalog,
@@ -259,7 +263,10 @@ test("OpenAI discovery requests the current Codex catalog contract", async () =>
     json({ models: [astra] }, { headers: { etag: '"astra-catalog"' } }),
     json({ models: [astra] }, { headers: { etag: '"astra-catalog"' } }),
   ]);
-  const adapter = createOpenAICodexProviderAdapter({ fetch: mock.fetch });
+  const adapter = createOpenAICodexProviderAdapter({
+    fetch: mock.fetch,
+    clientVersion: fixedCodexClientVersion("0.157.0"),
+  });
 
   const discovery = await adapter.discover({
     accessToken,
@@ -276,9 +283,57 @@ test("OpenAI discovery requests the current Codex catalog contract", async () =>
   for (const call of mock.calls) {
     assert.equal(
       new URL(call.url).searchParams.get("client_version"),
-      "0.153.0",
+      "0.157.0",
     );
-    assert.equal(new Headers(call.init?.headers).get("version"), "0.153.0");
+    assert.equal(new Headers(call.init?.headers).get("version"), "0.157.0");
+  }
+});
+
+test("OpenAI discovery reports the newest stable Codex release to the catalog", async () => {
+  const accessToken = jwt({
+    sub: "person-subject",
+    [AUTH_CLAIM]: { chatgpt_account_id: "workspace-123" },
+  });
+  const sol = { slug: "gpt-6-sol", display_name: "GPT-6-Sol" };
+  const mock = sequenceFetch([
+    json({ name: "@openai/codex", version: "0.158.2" }),
+    json({ models: [sol] }),
+    json({ models: [sol] }),
+  ]);
+  const adapter = createOpenAICodexProviderAdapter({
+    fetch: mock.fetch,
+    now: () => NOW,
+    clientVersion: createCodexClientVersionSource({
+      fetch: mock.fetch,
+      now: () => NOW,
+      setting: "auto",
+    }),
+  });
+
+  const discovery = await adapter.discover({
+    accessToken,
+    refreshToken: "refresh-token",
+    expiresAt: NOW + 60_000,
+  });
+
+  assert.equal(discovery.models[0]?.upstreamId, "gpt-6-sol");
+  assert.deepEqual(discovery.models[0]?.providerMetadata, {
+    kind: "openai-codex-model",
+    clientVersion: "0.158.2",
+  });
+  assert.equal(
+    mock.calls[0]?.url,
+    "https://registry.npmjs.org/@openai/codex/latest",
+  );
+  for (const call of mock.calls.slice(1)) {
+    assert.equal(
+      new URL(call.url).searchParams.get("client_version"),
+      "0.158.2",
+    );
+    assert.equal(
+      new Headers(call.init?.headers).get("user-agent"),
+      "codex_cli_rs/0.158.2",
+    );
   }
 });
 
@@ -286,6 +341,7 @@ test("OpenAI inference preparation emits the Codex Responses wire contract", asy
   const adapter = createOpenAICodexProviderAdapter({
     now: () => NOW,
     randomUUID: () => "131f4bad-a527-4b42-bbf7-4b4adf40079b",
+    clientVersion: fixedCodexClientVersion("0.157.0"),
   });
   const request: AnthropicMessagesRequest = {
     model: "openai/gpt-5-codex",
@@ -339,6 +395,7 @@ test("OpenAI native Codex preparation preserves reviewed Responses fields", asyn
   const adapter = createOpenAICodexProviderAdapter({
     now: () => NOW,
     randomUUID: () => "131f4bad-a527-4b42-bbf7-4b4adf40079b",
+    clientVersion: fixedCodexClientVersion("0.157.0"),
   });
 
   assert.ok(adapter.prepareResponsesInference);
@@ -404,7 +461,10 @@ test("OpenAI native Codex preparation preserves reviewed Responses fields", asyn
 });
 
 test("OpenAI Codex search preparation uses the dedicated subscription endpoint", async () => {
-  const adapter = createOpenAICodexProviderAdapter({ now: () => NOW });
+  const adapter = createOpenAICodexProviderAdapter({
+    now: () => NOW,
+    clientVersion: fixedCodexClientVersion("0.157.0"),
+  });
 
   assert.ok(adapter.prepareSearch);
   const request: CodexSearchRequest = {
@@ -508,3 +568,65 @@ test("OpenAI quota windows are named by their reported length, not their slot", 
     ["seven_day", "chat:secondary"],
   );
 });
+
+test("OpenAI requests never report an older client than the model's discovery", async () => {
+  const mock = registry157();
+  const adapter = createOpenAICodexProviderAdapter({
+    now: () => NOW,
+    randomUUID: () => "131f4bad-a527-4b42-bbf7-4b4adf40079b",
+    clientVersion: createCodexClientVersionSource({
+      fetch: mock,
+      now: () => NOW,
+      setting: "auto",
+    }),
+  });
+  const input = (providerMetadata: unknown) => ({
+    request: {
+      model: "openai/gpt-6-sol",
+      max_tokens: 100,
+      messages: [{ role: "user" as const, content: "Hi" }],
+    },
+    upstreamModel: "gpt-6-sol",
+    publicModel: "openai/gpt-6-sol",
+    secret: {
+      accessToken: "access-token",
+      refreshToken: "refresh",
+      expiresAt: NOW + 60_000,
+    },
+    identity: { externalAccountId: "person", externalWorkspaceId: "workspace" },
+    providerMetadata,
+    sessionId: "1fd981d9-1206-4d98-8523-35c50db3cb42",
+    signal: new AbortController().signal,
+  });
+  const version = async (providerMetadata: unknown) =>
+    new Headers(
+      (await adapter.prepareInference(input(providerMetadata))).init.headers,
+    ).get("version");
+
+  // This process's own lookup still says 0.157.0.
+  assert.equal(await version(undefined), "0.157.0");
+  // Another process discovered the model with 0.158.1; follow it from now on.
+  assert.equal(
+    await version({ kind: "openai-codex-model", clientVersion: "0.158.1" }),
+    "0.158.1",
+  );
+  assert.equal(await version(undefined), "0.158.1");
+  // Foreign, older or malformed metadata never lowers it.
+  assert.equal(
+    await version({ kind: "openai-codex-model", clientVersion: "0.157.9" }),
+    "0.158.1",
+  );
+  assert.equal(
+    await version({ kind: "other", clientVersion: "0.200.0" }),
+    "0.158.1",
+  );
+  assert.equal(
+    await version({ kind: "openai-codex-model", clientVersion: "1.0.0" }),
+    "0.158.1",
+  );
+});
+
+function registry157(): typeof fetch {
+  return (async () =>
+    json({ name: "@openai/codex", version: "0.157.0" })) as typeof fetch;
+}

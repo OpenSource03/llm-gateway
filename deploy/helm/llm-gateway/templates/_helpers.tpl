@@ -34,6 +34,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
   value: {{ .Values.legacyBasePath | quote }}
 - name: GATEWAY_KEY_WRAPPER
   value: {{ .Values.keyWrapper | quote }}
+- name: GATEWAY_CODEX_CLIENT_VERSION
+  value: {{ .Values.codexClientVersion | default "auto" | quote }}
 {{- if eq .Values.keyWrapper "local-rsa" }}
 - name: GATEWAY_LOCAL_RSA_KEY_PATH
   value: /run/secrets/llm-gateway/local-rsa.pem

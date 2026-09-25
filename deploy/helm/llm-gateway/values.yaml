@@ -11,6 +11,9 @@ publicBaseUrl: https://gateway.example.com
 databaseSslMode: verify-full
 legacyBasePath: /api/llm-gateway
 keyWrapper: local-rsa
+# Codex version reported to OpenAI: auto follows the newest stable release;
+# an exact version such as 0.157.0 pins it.
+codexClientVersion: auto
 azureKeyVaultKeyId: ""
 azureManagedIdentityClientId: ""
 
