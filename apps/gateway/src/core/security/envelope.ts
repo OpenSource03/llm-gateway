@@ -196,9 +196,15 @@ export const rewrapEnvelopeDataKey = async (
 export class AzureKeyVaultKeyWrapper implements KeyWrapper {
   readonly keyId: string;
   readonly #client: CryptographyClient;
+  readonly #migrationSourceKeyId: string | undefined;
 
-  constructor(keyId: string, managedIdentityClientId?: string) {
+  constructor(
+    keyId: string,
+    managedIdentityClientId?: string,
+    migrationSourceKeyId?: string,
+  ) {
     this.keyId = keyId;
+    this.#migrationSourceKeyId = migrationSourceKeyId;
     const credential = new DefaultAzureCredential({
       ...(managedIdentityClientId && {
         managedIdentityClientId,
@@ -218,7 +224,11 @@ export class AzureKeyVaultKeyWrapper implements KeyWrapper {
     // Old records retain their exact key version. Construct a client for that
     // immutable ID during rotation rather than accidentally using the latest.
     if (keyId !== this.keyId) {
-      assertCompatibleHistoricalKeyId(this.keyId, keyId);
+      assertAllowedHistoricalKeyId(
+        this.keyId,
+        keyId,
+        this.#migrationSourceKeyId,
+      );
       const env = getEnv();
       const credential = new DefaultAzureCredential({
         ...(env.AZURE_MANAGED_IDENTITY_CLIENT_ID && {
@@ -352,6 +362,58 @@ export const assertCompatibleHistoricalKeyId = (
       "Historical gateway key must use the configured Key Vault and key name",
     );
   }
+};
+
+/** Rows store Azure's exact key URL, so a migration source must match it byte for byte. */
+export const assertCanonicalVersionedKeyId = (keyId: string): void => {
+  const url = parsedVersionedKeyId(keyId);
+  const [, name, version] = url.pathname.split("/").filter(Boolean);
+
+  if (keyId !== `https://${url.hostname}/keys/${name}/${version}`) {
+    throw new Error(
+      "Key Vault key ID must be https://<vault>/keys/<name>/<version>",
+    );
+  }
+};
+
+/**
+ * Also accepts one exact key from another vault, so rewrap-keys can move
+ * rows when the gateway moves to a new vault.
+ */
+export const assertAllowedHistoricalKeyId = (
+  configuredKeyId: string,
+  historicalKeyId: string,
+  migrationSourceKeyId?: string,
+): void => {
+  if (migrationSourceKeyId && historicalKeyId === migrationSourceKeyId) {
+    assertCanonicalVersionedKeyId(historicalKeyId);
+
+    return;
+  }
+
+  assertCompatibleHistoricalKeyId(configuredKeyId, historicalKeyId);
+};
+
+/** Wrapper for one rewrap-keys run that moves rows off another vault's key. */
+export const createMigrationKeyWrapper = (
+  sourceKeyId: string,
+): AzureKeyVaultKeyWrapper => {
+  const env = getEnv();
+
+  if (env.GATEWAY_KEY_WRAPPER !== "azure-key-vault") {
+    throw new Error("Moving keys requires the azure-key-vault key wrapper");
+  }
+  assertCanonicalVersionedKeyId(env.GATEWAY_AZURE_KEY_VAULT_KEY_ID!);
+  assertCanonicalVersionedKeyId(sourceKeyId);
+  if (sourceKeyId === env.GATEWAY_AZURE_KEY_VAULT_KEY_ID) {
+    throw new Error("The source key is already the configured key");
+  }
+
+  return new AzureKeyVaultKeyWrapper(
+    env.GATEWAY_AZURE_KEY_VAULT_KEY_ID!,
+    env.AZURE_MANAGED_IDENTITY_CLIENT_ID,
+    sourceKeyId,
+  );
 };
 
 let cachedWrapper: KeyWrapper | null = null;

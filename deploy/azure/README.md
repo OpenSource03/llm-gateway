@@ -4,6 +4,11 @@ Use [app-service.bicep](app-service.bicep) for two Linux apps on an existing
 App Service plan, with a private endpoint for control access. Its prerequisites
 and rollout checks are in [app-service.md](app-service.md).
 
+[network.bicep](network.bicep) creates a dedicated VNet with App Service,
+private-endpoint, and Container Apps job subnets, a Linux App Service plan, a
+Consumption-profile Container Apps environment, a Log Analytics workspace, and a
+PostgreSQL private DNS zone, for installations that do not share existing ones.
+
 [foundation.bicep](foundation.bicep) creates a dedicated gateway PostgreSQL
 server, database, registry, vault, wrapping key, and runtime identity in a new
 resource group. Read [foundation.md](foundation.md) before its first deployment.

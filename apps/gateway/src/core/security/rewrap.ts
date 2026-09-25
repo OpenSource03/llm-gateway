@@ -1,17 +1,22 @@
 import { llmGatewayPrisma } from "../db";
 
 import {
+  createMigrationKeyWrapper,
   envelopeFromRecord,
   getGatewayKeyWrapper,
   rewrapEnvelopeDataKey,
 } from "./envelope";
 
-export const rewrapGatewayKeys = async (): Promise<{
+export const rewrapGatewayKeys = async (
+  options: { fromKeyId?: string } = {},
+): Promise<{
   credentials: number;
   oauthAttempts: number;
   keyWrapperId: string;
 }> => {
-  const wrapper = getGatewayKeyWrapper();
+  const wrapper = options.fromKeyId
+    ? createMigrationKeyWrapper(options.fromKeyId)
+    : getGatewayKeyWrapper();
   const [credentials, attempts] = await Promise.all([
     llmGatewayPrisma.gatewayProviderCredential.findMany({
       where: { keyWrapperId: { not: wrapper.keyId } },
@@ -58,6 +63,18 @@ export const rewrapGatewayKeys = async (): Promise<{
     });
 
     attemptCount += result.count;
+  }
+
+  const notMoved = { keyWrapperId: { not: wrapper.keyId } };
+  const [credentialsLeft, attemptsLeft] = await Promise.all([
+    llmGatewayPrisma.gatewayProviderCredential.count({ where: notMoved }),
+    llmGatewayPrisma.gatewayOAuthAttempt.count({ where: notMoved }),
+  ]);
+
+  if (credentialsLeft + attemptsLeft > 0) {
+    throw new Error(
+      `${credentialsLeft} credential(s) and ${attemptsLeft} OAuth attempt(s) are still not wrapped by ${wrapper.keyId}; rerun rewrap-keys`,
+    );
   }
 
   return {
