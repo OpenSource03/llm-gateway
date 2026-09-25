@@ -19,10 +19,11 @@ const SEMVER = /^(\d{1,4})\.(\d{1,4})\.(\d{1,4})$/;
 
 export interface CodexClientVersionSource {
   /**
-   * The version to present now. Never waits for the network; starts a
-   * background lookup when one is due, so every process stays current.
+   * The version for a provider request. Waits only for this process's first
+   * lookup; afterwards returns at once and refreshes in the background when
+   * due, so every process follows new releases.
    */
-  current(): string;
+  forRequest(): Promise<string>;
   /** Looks up the newest release when due, then returns the current version. */
   refresh(): Promise<string>;
 }
@@ -63,7 +64,7 @@ export const acceptedCodexClientVersion = (
 export const fixedCodexClientVersion = (
   version: string,
 ): CodexClientVersionSource => ({
-  current: () => version,
+  forRequest: async () => version,
   refresh: async () => version,
 });
 
@@ -83,6 +84,7 @@ export const createCodexClientVersionSource = (options: {
     return fixedCodexClientVersion(options.setting);
   }
   let version = reviewed;
+  let lookedUp = false;
   let nextLookupAt = 0;
   let inFlight: Promise<string> | null = null;
 
@@ -120,6 +122,7 @@ export const createCodexClientVersionSource = (options: {
       Logger.warn("Codex release lookup failed", { keeping: version });
       nextLookupAt = options.now() + RETRY_MS;
     }
+    lookedUp = true;
 
     return version;
   };
@@ -134,11 +137,12 @@ export const createCodexClientVersionSource = (options: {
   };
 
   return {
-    current() {
+    forRequest() {
+      if (!lookedUp) return refresh();
       // lookup() never rejects, so the background refresh cannot go unhandled.
       void refresh();
 
-      return version;
+      return Promise.resolve(version);
     },
     refresh,
   };

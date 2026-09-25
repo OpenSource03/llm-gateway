@@ -58,18 +58,37 @@ test("a new major release after a followed one keeps the followed version", asyn
   assert.equal(mock.calls(), 2);
 });
 
-test("current() starts a due lookup in the background without waiting", async () => {
-  const mock = registry([release("0.158.0")]);
+test("requests wait for the first lookup only, then refresh in the background", async () => {
+  let now = 0;
+  const mock = registry([release("0.158.0"), release("0.159.0")]);
+  const source = createCodexClientVersionSource({
+    fetch: mock.fetch,
+    now: () => now,
+    setting: "auto",
+  });
+
+  // A fresh process never sends its first request with the fallback.
+  assert.equal(await source.forRequest(), "0.158.0");
+  assert.equal(mock.calls(), 1);
+  now += 7 * HOUR;
+  // Due again: this request is not delayed, and the lookup runs behind it.
+  assert.equal(await source.forRequest(), "0.158.0");
+  assert.equal(mock.calls(), 2);
+  assert.equal(await source.refresh(), "0.159.0");
+  assert.equal(await source.forRequest(), "0.159.0");
+  assert.equal(mock.calls(), 2);
+});
+
+test("a failed first lookup does not delay later requests", async () => {
+  const mock = registry([new TypeError("fetch failed")]);
   const source = createCodexClientVersionSource({
     fetch: mock.fetch,
     now: () => 0,
     setting: "auto",
   });
 
-  assert.equal(source.current(), REVIEWED_CODEX_CLIENT_VERSION);
-  assert.equal(mock.calls(), 1);
-  assert.equal(await source.refresh(), "0.158.0");
-  assert.equal(source.current(), "0.158.0");
+  assert.equal(await source.forRequest(), REVIEWED_CODEX_CLIENT_VERSION);
+  assert.equal(await source.forRequest(), REVIEWED_CODEX_CLIENT_VERSION);
   assert.equal(mock.calls(), 1);
 });
 
@@ -86,7 +105,6 @@ test("looks up the release once, then again after six hours", async () => {
     setting: "auto",
   });
 
-  assert.equal(source.current(), REVIEWED_CODEX_CLIENT_VERSION);
   assert.deepEqual(await Promise.all([source.refresh(), source.refresh()]), [
     "0.158.0",
     "0.158.0",
@@ -97,7 +115,7 @@ test("looks up the release once, then again after six hours", async () => {
   assert.equal(mock.calls(), 1);
   now += 2 * HOUR;
   assert.equal(await source.refresh(), "0.159.0");
-  assert.equal(source.current(), "0.159.0");
+  assert.equal(await source.forRequest(), "0.159.0");
   assert.equal(mock.calls(), 2);
 });
 
@@ -133,6 +151,6 @@ test("a pinned version never looks anything up", async () => {
   });
 
   assert.equal(await source.refresh(), "0.155.0");
-  assert.equal(source.current(), "0.155.0");
+  assert.equal(await source.forRequest(), "0.155.0");
   assert.equal(mock.calls(), 0);
 });

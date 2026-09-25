@@ -410,7 +410,7 @@ export function createOpenAICodexProviderAdapter(
       const workspaceId =
         input.identity.externalWorkspaceId ?? input.identity.externalAccountId;
       const headers = codexInferenceHeaders(
-        clientVersion().current(),
+        await clientVersion().forRequest(),
         input.secret.accessToken,
         workspaceId,
         sessionId,
@@ -462,7 +462,7 @@ export function createOpenAICodexProviderAdapter(
       const workspaceId =
         input.identity.externalWorkspaceId ?? input.identity.externalAccountId;
       const headers = codexInferenceHeaders(
-        clientVersion().current(),
+        await clientVersion().forRequest(),
         input.secret.accessToken,
         workspaceId,
         sessionId,
@@ -512,7 +512,7 @@ export function createOpenAICodexProviderAdapter(
       const workspaceId =
         input.identity.externalWorkspaceId ?? input.identity.externalAccountId;
       const headers = codexHeaders(
-        clientVersion().current(),
+        await clientVersion().forRequest(),
         input.secret.accessToken,
         workspaceId,
         false,
