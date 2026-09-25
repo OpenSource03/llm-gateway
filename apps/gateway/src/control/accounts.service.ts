@@ -26,6 +26,7 @@ import { classifyAccountRefreshFailures } from "../core/account-refresh-health";
 import { llmGatewayPrisma } from "../core/db";
 import { GatewayError } from "../core/errors";
 import { getProviderAdapter, ProviderProtocolError } from "../core/providers";
+import { withoutSupersededHeaderQuota } from "../core/quota-generation";
 import {
   fromDbProvider,
   toDbProvider,
@@ -148,18 +149,22 @@ type AccountRecord = Awaited<
     remaining: number | null;
     limit: number | null;
     resetAt: Date | null;
+    source: string;
     observedAt: Date;
   }>;
 };
 
 const toAccountRow = (account: AccountRecord): GatewayProviderAccountRow => {
-  // Keep only the newest observation per meter/window in list responses.
+  // Show the windows routing uses: the newest observation per meter/window,
+  // ignoring header rows a later complete poll has superseded.
   const quota = new Map<
     string,
     NonNullable<AccountRecord["quotaSnapshots"]>[number]
   >();
 
-  for (const item of account.quotaSnapshots ?? []) {
+  for (const item of withoutSupersededHeaderQuota(
+    account.quotaSnapshots ?? [],
+  )) {
     const key = `${item.meterKey}:${item.windowKey}`;
     const current = quota.get(key);
 

@@ -22,6 +22,7 @@ import {
   type LeaseHandle,
 } from "../leases";
 import type { QuotaSnapshot } from "../providers";
+import { withoutSupersededHeaderQuota } from "../quota-generation";
 import type { ProviderIdentity } from "../providers/types";
 import { isGatewayTokenProfile } from "../providers/types";
 import { fromDbProvider } from "../providers/provider-id";
@@ -72,26 +73,9 @@ interface RoutingQuotaSnapshot {
 export const currentRoutingQuotaSnapshots = <T extends RoutingQuotaSnapshot>(
   snapshots: T[],
 ): T[] => {
-  const latestPollAt = snapshots.reduce<number | null>(
-    (latest, snapshot) =>
-      snapshot.source === "POLL"
-        ? Math.max(
-            latest ?? Number.NEGATIVE_INFINITY,
-            snapshot.observedAt.getTime(),
-          )
-        : latest,
-    null,
-  );
   const latestByWindow = new Map<string, T>();
 
-  for (const snapshot of snapshots) {
-    if (
-      snapshot.source === "RESPONSE_HEADER" &&
-      latestPollAt !== null &&
-      snapshot.observedAt.getTime() < latestPollAt
-    ) {
-      continue;
-    }
+  for (const snapshot of withoutSupersededHeaderQuota(snapshots)) {
     const key = `${snapshot.meterKey}:${snapshot.windowKey}`;
     const current = latestByWindow.get(key);
 

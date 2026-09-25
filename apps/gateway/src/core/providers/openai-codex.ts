@@ -816,10 +816,14 @@ export function parseCodexQuota(
         ? { limitReached: rateLimit.limit_reached }
         : {}),
     };
+    const [primaryName, secondaryName] = codexWindowNames(
+      codexWindowSeconds(rateLimit.primary_window),
+      codexWindowSeconds(rateLimit.secondary_window),
+    );
 
     addCodexWindow(
       windows,
-      "chat:primary",
+      codexChatWindowId(primaryName),
       "Primary",
       rateLimit.primary_window,
       now,
@@ -828,7 +832,7 @@ export function parseCodexQuota(
     );
     addCodexWindow(
       windows,
-      "chat:secondary",
+      codexChatWindowId(secondaryName),
       "Secondary",
       rateLimit.secondary_window,
       now,
@@ -846,9 +850,14 @@ export function parseCodexQuota(
       const nested = isRecord(raw.rate_limit) ? raw.rate_limit : undefined;
 
       if (!nested) continue;
+      const [primaryName, secondaryName] = codexWindowNames(
+        codexWindowSeconds(nested.primary_window),
+        codexWindowSeconds(nested.secondary_window),
+      );
+
       addCodexWindow(
         windows,
-        `${meter}:primary`,
+        `${meter}:${primaryName}`,
         `${meter} primary`,
         nested.primary_window,
         now,
@@ -856,7 +865,7 @@ export function parseCodexQuota(
       );
       addCodexWindow(
         windows,
-        `${meter}:secondary`,
+        `${meter}:${secondaryName}`,
         `${meter} secondary`,
         nested.secondary_window,
         now,
@@ -917,6 +926,12 @@ export function parseCodexQuotaHeaders(
   now = Date.now(),
 ): QuotaSnapshot | null {
   const windows: QuotaWindow[] = [];
+  const minutes = (key: "primary" | "secondary") =>
+    finiteNumber(headers.get(`x-codex-${key}-window-minutes`));
+  const names = codexWindowNames(
+    secondsFromMinutes(minutes("primary")),
+    secondsFromMinutes(minutes("secondary")),
+  );
 
   for (const key of ["primary", "secondary"] as const) {
     const usedPercent = finiteNumber(
@@ -930,7 +945,7 @@ export function parseCodexQuotaHeaders(
       resetAt === undefined ? undefined : unixTimestampMs(resetAt);
 
     windows.push({
-      id: `chat:${key}`,
+      id: codexChatWindowId(names[key === "primary" ? 0 : 1]),
       label: key === "primary" ? "Primary" : "Secondary",
       usedFraction: used,
       remainingFraction: 1 - used,
@@ -951,6 +966,46 @@ export function parseCodexQuotaHeaders(
 
 const unixTimestampMs = (value: number): number =>
   value > 1_000_000_000_000 ? value : value * 1_000;
+
+const codexWindowSeconds = (raw: unknown): number | undefined =>
+  isRecord(raw) ? finiteNumber(raw.limit_window_seconds) : undefined;
+
+const secondsFromMinutes = (minutes: number | undefined): number | undefined =>
+  minutes === undefined ? undefined : minutes * 60;
+
+/**
+ * Codex reports "primary" and "secondary" slots whose lengths vary by plan (a
+ * plan may have only a weekly window). Name each window by its reported length,
+ * as Claude's are, and keep the slot name only when no length is given.
+ */
+const codexWindowNames = (
+  primarySeconds: number | undefined,
+  secondarySeconds: number | undefined,
+): [string, string] => {
+  const name = (seconds: number | undefined, slot: string): string => {
+    const minutes =
+      seconds === undefined || seconds <= 0
+        ? undefined
+        : Math.round(seconds / 60);
+
+    if (minutes === undefined) return slot;
+    if (minutes === 300) return "five_hour";
+    if (minutes === 10_080) return "seven_day";
+
+    return `window_${minutes}m`;
+  };
+  const primary = name(primarySeconds, "primary");
+  const secondary = name(secondarySeconds, "secondary");
+
+  // Two windows must never share a key; fall back to the slots if they would.
+  return primary === secondary
+    ? ["primary", "secondary"]
+    : [primary, secondary];
+};
+
+/** The main Codex meter keeps its legacy "chat:" slot ids when no length is known. */
+const codexChatWindowId = (name: string): string =>
+  name === "primary" || name === "secondary" ? `chat:${name}` : name;
 
 const codexResetAt = (
   absolute: number | undefined,

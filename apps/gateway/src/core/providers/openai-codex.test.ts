@@ -441,3 +441,70 @@ test("OpenAI Codex search preparation uses the dedicated subscription endpoint",
   assert.equal(body.model, "gpt-5.6-luna");
   assert.equal(body.id, "search-id");
 });
+
+test("OpenAI quota windows are named by their reported length, not their slot", () => {
+  const ids = (payload: Record<string, unknown>) =>
+    parseCodexQuota(payload, NOW).windows.map((window) => [
+      window.id,
+      window.scope,
+    ]);
+
+  // A plan with only a weekly window reports it in the primary slot.
+  assert.deepEqual(
+    ids({
+      rate_limit: {
+        primary_window: { used_percent: 78, limit_window_seconds: 604_800 },
+        secondary_window: null,
+      },
+    }),
+    [["seven_day", undefined]],
+  );
+  assert.deepEqual(
+    ids({
+      rate_limit: {
+        primary_window: { used_percent: 10, limit_window_seconds: 18_000 },
+        secondary_window: { used_percent: 20, limit_window_seconds: 604_800 },
+      },
+      additional_rate_limits: [
+        {
+          metered_feature: "codex_other_models",
+          rate_limit: {
+            primary_window: { used_percent: 5, limit_window_seconds: 86_400 },
+          },
+        },
+      ],
+    }),
+    [
+      ["five_hour", undefined],
+      ["seven_day", undefined],
+      ["codex_other_models:window_1440m", "codex_other_models"],
+    ],
+  );
+  // Two windows of one length keep distinct slot keys.
+  assert.deepEqual(
+    ids({
+      rate_limit: {
+        primary_window: { used_percent: 1, limit_window_seconds: 604_800 },
+        secondary_window: { used_percent: 2, limit_window_seconds: 604_800 },
+      },
+    }),
+    [
+      ["chat:primary", undefined],
+      ["chat:secondary", undefined],
+    ],
+  );
+
+  const fromHeaders = parseCodexQuotaHeaders(
+    new Headers({
+      "x-codex-primary-used-percent": "78",
+      "x-codex-primary-window-minutes": "10080",
+      "x-codex-secondary-used-percent": "0",
+    }),
+    NOW,
+  );
+
+  assert.deepEqual(
+    fromHeaders?.windows.map((window) => window.id),
+    ["seven_day", "chat:secondary"],
+  );
+});

@@ -3,6 +3,16 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.14
+
+- Codex quota windows are named by the length OpenAI reports ("five_hour",
+  "seven_day", or "window_<minutes>m") instead of their primary/secondary
+  slot. A plan with only a weekly window reports it in the primary slot, so
+  dashboards showed the weekly usage as a 5-hour window. Slot names remain
+  only when OpenAI sends no length.
+- The account list shows the same quota windows routing uses: response-header
+  rows older than the latest complete poll no longer linger as extra bars.
+
 ## 0.2.13
 
 - Codex images for Claude models are fitted within 2000 px per side before
