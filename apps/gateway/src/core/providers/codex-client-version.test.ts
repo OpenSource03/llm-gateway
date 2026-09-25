@@ -154,3 +154,30 @@ test("a pinned version never looks anything up", async () => {
   assert.equal(await source.forRequest(), "0.155.0");
   assert.equal(mock.calls(), 0);
 });
+
+test("observe() adopts a newer same-major version and ignores the rest", async () => {
+  const mock = registry([release("0.157.0")]);
+  const source = createCodexClientVersionSource({
+    fetch: mock.fetch,
+    now: () => 0,
+    setting: "auto",
+  });
+
+  source.observe("0.158.0");
+  assert.equal(await source.forRequest(), "0.158.0");
+  source.observe("0.157.5");
+  source.observe("1.0.0");
+  source.observe("not-a-version");
+  assert.equal(await source.forRequest(), "0.158.0");
+});
+
+test("a pinned version ignores observed versions", async () => {
+  const source = createCodexClientVersionSource({
+    fetch: registry([]).fetch,
+    now: () => 0,
+    setting: "0.157.0",
+  });
+
+  source.observe("0.158.0");
+  assert.equal(await source.forRequest(), "0.157.0");
+});

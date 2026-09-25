@@ -26,6 +26,11 @@ export interface CodexClientVersionSource {
   forRequest(): Promise<string>;
   /** Looks up the newest release when due, then returns the current version. */
   refresh(): Promise<string>;
+  /**
+   * Adopt a version another process already used, for example the one that
+   * discovered the requested model. Follows the same rules as a lookup.
+   */
+  observe(version: string): void;
 }
 
 const parseVersion = (value: string): [number, number, number] | null => {
@@ -66,6 +71,7 @@ export const fixedCodexClientVersion = (
 ): CodexClientVersionSource => ({
   forRequest: async () => version,
   refresh: async () => version,
+  observe: () => undefined,
 });
 
 /**
@@ -88,6 +94,15 @@ export const createCodexClientVersionSource = (options: {
   let nextLookupAt = 0;
   let inFlight: Promise<string> | null = null;
 
+  const adopt = (candidate: string): void => {
+    const next = acceptedCodexClientVersion(reviewed, version, candidate);
+
+    if (next !== version) {
+      Logger.info("Codex client version updated", { from: version, to: next });
+    }
+    version = next;
+  };
+
   const lookup = async (): Promise<string> => {
     try {
       // No caller signal: one caller's cancellation must not fail the shared lookup.
@@ -108,15 +123,7 @@ export const createCodexClientVersionSource = (options: {
           : "";
 
       if (!parseVersion(latest)) throw new Error("Malformed Codex release");
-      const next = acceptedCodexClientVersion(reviewed, version, latest);
-
-      if (next !== version) {
-        Logger.info("Codex client version updated", {
-          from: version,
-          to: next,
-        });
-      }
-      version = next;
+      adopt(latest);
       nextLookupAt = options.now() + REFRESH_MS;
     } catch {
       Logger.warn("Codex release lookup failed", { keeping: version });
@@ -145,5 +152,8 @@ export const createCodexClientVersionSource = (options: {
       return Promise.resolve(version);
     },
     refresh,
+    observe(candidate) {
+      if (parseVersion(candidate)) adopt(candidate);
+    },
   };
 };

@@ -54,6 +54,16 @@ export const OPENAI_CODEX_ENDPOINTS = {
 } as const;
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const CODEX_MODEL_METADATA_KIND = "openai-codex-model";
+
+/** The Codex version that discovered a model, from its saved metadata. */
+const codexModelClientVersion = (metadata: unknown): string | undefined =>
+  isRecord(metadata) &&
+  metadata.kind === CODEX_MODEL_METADATA_KIND &&
+  typeof metadata.clientVersion === "string"
+    ? metadata.clientVersion
+    : undefined;
+
 const TOKEN_SKEW_MS = 5 * 60_000;
 const DEFAULT_DEVICE_TTL_SECONDS = 600;
 const JWT_AUTH_CLAIM = "https://api.openai.com/auth";
@@ -133,6 +143,14 @@ export function createOpenAICodexProviderAdapter(
       now: deps.now,
       setting: getEnv().GATEWAY_CODEX_CLIENT_VERSION,
     }));
+  const requestVersion = (providerMetadata: unknown): Promise<string> => {
+    const source = clientVersion();
+    const discoveredWith = codexModelClientVersion(providerMetadata);
+
+    if (discoveredWith) source.observe(discoveredWith);
+
+    return source.forRequest();
+  };
 
   return {
     id: "openai",
@@ -343,7 +361,15 @@ export function createOpenAICodexProviderAdapter(
         const models = parseCodexModels(
           payload,
           response.headers.get("etag") ?? undefined,
-        );
+        ).map((model) => ({
+          ...model,
+          // Requests for this model never report an older client, even from
+          // a process whose own release lookup has not caught up yet.
+          providerMetadata: {
+            kind: CODEX_MODEL_METADATA_KIND,
+            clientVersion: version,
+          },
+        }));
 
         if (discoveredModels.length === 0 && models.length > 0) {
           discoveredModels = models;
@@ -410,7 +436,7 @@ export function createOpenAICodexProviderAdapter(
       const workspaceId =
         input.identity.externalWorkspaceId ?? input.identity.externalAccountId;
       const headers = codexInferenceHeaders(
-        await clientVersion().forRequest(),
+        await requestVersion(input.providerMetadata),
         input.secret.accessToken,
         workspaceId,
         sessionId,
@@ -462,7 +488,7 @@ export function createOpenAICodexProviderAdapter(
       const workspaceId =
         input.identity.externalWorkspaceId ?? input.identity.externalAccountId;
       const headers = codexInferenceHeaders(
-        await clientVersion().forRequest(),
+        await requestVersion(input.providerMetadata),
         input.secret.accessToken,
         workspaceId,
         sessionId,
