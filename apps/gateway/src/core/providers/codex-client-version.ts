@@ -1,0 +1,127 @@
+import Logger from "../../config/logger";
+
+import { expectJson, fetchWithTimeout, isRecord } from "./shared";
+
+/**
+ * Newest Codex release whose wire contract this adapter was checked against.
+ * Raise it after reviewing a Codex release; it is also the fallback version.
+ */
+export const REVIEWED_CODEX_CLIENT_VERSION = "0.157.0";
+
+// OpenAI filters the Codex model catalog by the client version, so a stale
+// version hides new models. The npm "latest" tag is the newest stable release.
+const LATEST_RELEASE_URL = "https://registry.npmjs.org/@openai/codex/latest";
+const REFRESH_MS = 6 * 60 * 60_000;
+const RETRY_MS = 15 * 60_000;
+const LOOKUP_TIMEOUT_MS = 5_000;
+const MAX_RESPONSE_BYTES = 64 * 1024;
+const SEMVER = /^(\d{1,4})\.(\d{1,4})\.(\d{1,4})$/;
+
+export interface CodexClientVersionSource {
+  /** The version to present now. Never waits for the network. */
+  current(): string;
+  /** Looks up the newest release when due, then returns the current version. */
+  refresh(): Promise<string>;
+}
+
+const parseVersion = (value: string): [number, number, number] | null => {
+  const match = SEMVER.exec(value);
+
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+};
+
+/**
+ * Follow a newer release of the reviewed major version. A lower, malformed or
+ * new-major version keeps the reviewed one: a major release may change the
+ * wire contract this adapter reconstructs.
+ */
+export const acceptedCodexClientVersion = (
+  reviewed: string,
+  candidate: string,
+): string => {
+  const floor = parseVersion(reviewed);
+  const latest = parseVersion(candidate);
+
+  if (!floor || !latest || latest[0] !== floor[0]) return reviewed;
+  const newer =
+    latest[1] > floor[1] || (latest[1] === floor[1] && latest[2] > floor[2]);
+
+  return newer ? candidate : reviewed;
+};
+
+export const fixedCodexClientVersion = (
+  version: string,
+): CodexClientVersionSource => ({
+  current: () => version,
+  refresh: async () => version,
+});
+
+/**
+ * `setting` is "auto" to follow the newest stable Codex release, or an exact
+ * version to pin one.
+ */
+export const createCodexClientVersionSource = (options: {
+  fetch: typeof fetch;
+  now: () => number;
+  setting: string;
+  reviewed?: string;
+}): CodexClientVersionSource => {
+  const reviewed = options.reviewed ?? REVIEWED_CODEX_CLIENT_VERSION;
+
+  if (options.setting !== "auto") {
+    return fixedCodexClientVersion(options.setting);
+  }
+  let version = reviewed;
+  let nextLookupAt = 0;
+  let inFlight: Promise<string> | null = null;
+
+  const lookup = async (): Promise<string> => {
+    try {
+      // No caller signal: one caller's cancellation must not fail the shared lookup.
+      const response = await fetchWithTimeout(
+        options.fetch,
+        LATEST_RELEASE_URL,
+        { method: "GET", headers: { Accept: "application/json" } },
+        LOOKUP_TIMEOUT_MS,
+      );
+      const payload = await expectJson(
+        response,
+        "Codex release lookup",
+        MAX_RESPONSE_BYTES,
+      );
+      const latest =
+        isRecord(payload) && typeof payload.version === "string"
+          ? payload.version
+          : "";
+
+      if (!parseVersion(latest)) throw new Error("Malformed Codex release");
+      const next = acceptedCodexClientVersion(reviewed, latest);
+
+      if (next !== version) {
+        Logger.info("Codex client version updated", {
+          from: version,
+          to: next,
+        });
+      }
+      version = next;
+      nextLookupAt = options.now() + REFRESH_MS;
+    } catch {
+      Logger.warn("Codex release lookup failed", { keeping: version });
+      nextLookupAt = options.now() + RETRY_MS;
+    }
+
+    return version;
+  };
+
+  return {
+    current: () => version,
+    refresh() {
+      if (options.now() < nextLookupAt) return Promise.resolve(version);
+      inFlight ??= lookup().finally(() => {
+        inFlight = null;
+      });
+
+      return inFlight;
+    },
+  };
+};

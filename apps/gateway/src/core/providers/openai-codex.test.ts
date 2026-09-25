@@ -5,6 +5,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createCodexClientVersionSource,
+  fixedCodexClientVersion,
+} from "./codex-client-version";
+import {
   OPENAI_CODEX_ENDPOINTS,
   createOpenAICodexProviderAdapter,
   parseCodexCatalog,
@@ -259,7 +263,10 @@ test("OpenAI discovery requests the current Codex catalog contract", async () =>
     json({ models: [astra] }, { headers: { etag: '"astra-catalog"' } }),
     json({ models: [astra] }, { headers: { etag: '"astra-catalog"' } }),
   ]);
-  const adapter = createOpenAICodexProviderAdapter({ fetch: mock.fetch });
+  const adapter = createOpenAICodexProviderAdapter({
+    fetch: mock.fetch,
+    clientVersion: fixedCodexClientVersion("0.157.0"),
+  });
 
   const discovery = await adapter.discover({
     accessToken,
@@ -276,9 +283,53 @@ test("OpenAI discovery requests the current Codex catalog contract", async () =>
   for (const call of mock.calls) {
     assert.equal(
       new URL(call.url).searchParams.get("client_version"),
-      "0.153.0",
+      "0.157.0",
     );
-    assert.equal(new Headers(call.init?.headers).get("version"), "0.153.0");
+    assert.equal(new Headers(call.init?.headers).get("version"), "0.157.0");
+  }
+});
+
+test("OpenAI discovery reports the newest stable Codex release to the catalog", async () => {
+  const accessToken = jwt({
+    sub: "person-subject",
+    [AUTH_CLAIM]: { chatgpt_account_id: "workspace-123" },
+  });
+  const sol = { slug: "gpt-6-sol", display_name: "GPT-6-Sol" };
+  const mock = sequenceFetch([
+    json({ name: "@openai/codex", version: "0.158.2" }),
+    json({ models: [sol] }),
+    json({ models: [sol] }),
+  ]);
+  const adapter = createOpenAICodexProviderAdapter({
+    fetch: mock.fetch,
+    now: () => NOW,
+    clientVersion: createCodexClientVersionSource({
+      fetch: mock.fetch,
+      now: () => NOW,
+      setting: "auto",
+    }),
+  });
+
+  const discovery = await adapter.discover({
+    accessToken,
+    refreshToken: "refresh-token",
+    expiresAt: NOW + 60_000,
+  });
+
+  assert.equal(discovery.models[0]?.upstreamId, "gpt-6-sol");
+  assert.equal(
+    mock.calls[0]?.url,
+    "https://registry.npmjs.org/@openai/codex/latest",
+  );
+  for (const call of mock.calls.slice(1)) {
+    assert.equal(
+      new URL(call.url).searchParams.get("client_version"),
+      "0.158.2",
+    );
+    assert.equal(
+      new Headers(call.init?.headers).get("user-agent"),
+      "codex_cli_rs/0.158.2",
+    );
   }
 });
 

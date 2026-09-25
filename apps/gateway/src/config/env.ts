@@ -84,6 +84,7 @@ const rawEnvironment = () => ({
     process.env.GATEWAY_ANTHROPIC_AGENT_SDK_ALLOW_INSECURE,
   GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON:
     process.env.GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON,
+  GATEWAY_CODEX_CLIENT_VERSION: process.env.GATEWAY_CODEX_CLIENT_VERSION,
   LOG_LEVEL: process.env.LOG_LEVEL,
 });
 
@@ -139,6 +140,11 @@ export const envSchema = z
       .transform((value) => value === "true" || value === "1"),
     GATEWAY_ANTHROPIC_AGENT_SDK_MODEL_REWRITES_JSON:
       agentSdkModelRewritesJsonSchema,
+    // "auto" follows the newest stable Codex release; an exact version pins it.
+    GATEWAY_CODEX_CLIENT_VERSION: z
+      .string()
+      .regex(/^(auto|\d{1,4}\.\d{1,4}\.\d{1,4})$/)
+      .default("auto"),
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),

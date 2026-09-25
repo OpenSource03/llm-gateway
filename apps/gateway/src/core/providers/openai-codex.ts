@@ -14,6 +14,12 @@ import { anthropicToResponses } from "../translate/anthropic-to-responses";
 import { transformResponsesResponse } from "../translate/responses-to-anthropic";
 import { sanitizeCodexResponsesStream } from "../translate/sanitize-codex-responses";
 import { preparePlaintextCollaboration } from "../translate/plaintext-collaboration";
+import { getEnv } from "../../config/env";
+
+import {
+  createCodexClientVersionSource,
+  type CodexClientVersionSource,
+} from "./codex-client-version";
 
 import {
   DEFAULT_ADAPTER_DEPENDENCIES,
@@ -48,10 +54,6 @@ export const OPENAI_CODEX_ENDPOINTS = {
 } as const;
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-// This is the newest Codex wire contract covered by this adapter's fixtures.
-// OpenAI filters the live catalog by this value; stale versions omit models
-// whose minimum supported client is newer (for example GPT-6 Astra).
-const CLIENT_VERSION = "0.153.0";
 const TOKEN_SKEW_MS = 5 * 60_000;
 const DEFAULT_DEVICE_TTL_SECONDS = 600;
 const JWT_AUTH_CLAIM = "https://api.openai.com/auth";
@@ -116,9 +118,21 @@ interface OpenAIDeviceState extends OAuthPrivateState {
 }
 
 export function createOpenAICodexProviderAdapter(
-  overrides: Partial<AdapterDependencies> = {},
+  overrides: Partial<AdapterDependencies> & {
+    clientVersion?: CodexClientVersionSource;
+  } = {},
 ): SubscriptionProviderAdapter {
-  const deps = { ...DEFAULT_ADAPTER_DEPENDENCIES, ...overrides };
+  const { clientVersion: clientVersionOverride, ...dependencyOverrides } =
+    overrides;
+  const deps = { ...DEFAULT_ADAPTER_DEPENDENCIES, ...dependencyOverrides };
+  let versionSource = clientVersionOverride;
+  // Created on first use so importing the adapter never reads configuration.
+  const clientVersion = (): CodexClientVersionSource =>
+    (versionSource ??= createCodexClientVersionSource({
+      fetch: deps.fetch,
+      now: deps.now,
+      setting: getEnv().GATEWAY_CODEX_CLIENT_VERSION,
+    }));
 
   return {
     id: "openai",
@@ -292,7 +306,10 @@ export function createOpenAICodexProviderAdapter(
         secret.accessToken,
         secret.idToken,
       );
+      // OpenAI omits models that need a newer client than the one reported.
+      const version = await clientVersion().refresh();
       const headers = codexHeaders(
+        version,
         secret.accessToken,
         identity.externalWorkspaceId,
         false,
@@ -305,7 +322,7 @@ export function createOpenAICodexProviderAdapter(
       for (const path of ["/codex/models", "/models"]) {
         const url = new URL(`${OPENAI_CODEX_ENDPOINTS.base}${path}`);
 
-        url.searchParams.set("client_version", CLIENT_VERSION);
+        url.searchParams.set("client_version", version);
         const response = await fetchWithTimeout(
           deps.fetch,
           url,
@@ -393,6 +410,7 @@ export function createOpenAICodexProviderAdapter(
       const workspaceId =
         input.identity.externalWorkspaceId ?? input.identity.externalAccountId;
       const headers = codexInferenceHeaders(
+        clientVersion().current(),
         input.secret.accessToken,
         workspaceId,
         sessionId,
@@ -444,6 +462,7 @@ export function createOpenAICodexProviderAdapter(
       const workspaceId =
         input.identity.externalWorkspaceId ?? input.identity.externalAccountId;
       const headers = codexInferenceHeaders(
+        clientVersion().current(),
         input.secret.accessToken,
         workspaceId,
         sessionId,
@@ -493,6 +512,7 @@ export function createOpenAICodexProviderAdapter(
       const workspaceId =
         input.identity.externalWorkspaceId ?? input.identity.externalAccountId;
       const headers = codexHeaders(
+        clientVersion().current(),
         input.secret.accessToken,
         workspaceId,
         false,
@@ -648,6 +668,7 @@ export function extractOpenAIIdentity(
 }
 
 function codexHeaders(
+  version: string,
   accessToken: string,
   accountId: string | undefined,
   stream: boolean,
@@ -656,8 +677,8 @@ function codexHeaders(
     Authorization: `Bearer ${accessToken}`,
     "OpenAI-Beta": "responses=experimental",
     originator: "codex_cli_rs",
-    version: CLIENT_VERSION,
-    "User-Agent": `codex_cli_rs/${CLIENT_VERSION}`,
+    version,
+    "User-Agent": `codex_cli_rs/${version}`,
     Accept: stream ? "text/event-stream" : "application/json",
   });
 
@@ -668,13 +689,14 @@ function codexHeaders(
 }
 
 function codexInferenceHeaders(
+  version: string,
   accessToken: string,
   workspaceId: string | undefined,
   sessionId: string,
   model: string,
   serviceTier?: string,
 ): Headers {
-  const headers = codexHeaders(accessToken, workspaceId, true);
+  const headers = codexHeaders(version, accessToken, workspaceId, true);
 
   headers.set("conversation_id", sessionId);
   headers.set("session_id", sessionId);

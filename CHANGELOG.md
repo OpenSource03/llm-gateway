@@ -3,6 +3,17 @@
 All notable changes are documented here. The project follows Semantic
 Versioning after the initial 0.x compatibility period.
 
+## 0.2.15
+
+- OpenAI model discovery follows the newest stable Codex release. OpenAI hides
+  models that need a newer client than the one reported, so GPT-6 Sol and Luna
+  (Codex 0.157.0) were missing while the gateway reported 0.153.0. The gateway
+  now checks npm every six hours and reports that version, never below the
+  reviewed 0.157.0 and never a new major version. New models appear on the next
+  catalog refresh without a release.
+- `GATEWAY_CODEX_CLIENT_VERSION` pins an exact version instead (default
+  `auto`).
+
 ## 0.2.14
 
 - Codex quota windows are named by the length OpenAI reports ("five_hour",
