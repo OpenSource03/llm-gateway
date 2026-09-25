@@ -47,6 +47,9 @@ param agentSdkAllowInsecure bool = false
 @description('Bounded JSON array of corrections for stale external bridge catalog rows.')
 param agentSdkModelRewritesJson string = '[]'
 
+@description('Codex version reported to OpenAI: auto follows the newest stable release; an exact version pins it.')
+param codexClientVersion string = 'auto'
+
 param publicBaseUrl string
 param migrationExpectedHost string
 param migrationExpectedDatabase string
@@ -99,6 +102,10 @@ var commonEnv = concat([
   {
     name: 'AZURE_MANAGED_IDENTITY_CLIENT_ID'
     value: managedIdentityClientId
+  }
+  {
+    name: 'GATEWAY_CODEX_CLIENT_VERSION'
+    value: codexClientVersion
   }
 ], empty(agentSdkUrl) ? [] : [
   {

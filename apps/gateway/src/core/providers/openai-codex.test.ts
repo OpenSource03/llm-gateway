@@ -337,6 +337,7 @@ test("OpenAI inference preparation emits the Codex Responses wire contract", asy
   const adapter = createOpenAICodexProviderAdapter({
     now: () => NOW,
     randomUUID: () => "131f4bad-a527-4b42-bbf7-4b4adf40079b",
+    clientVersion: fixedCodexClientVersion("0.157.0"),
   });
   const request: AnthropicMessagesRequest = {
     model: "openai/gpt-5-codex",
@@ -390,6 +391,7 @@ test("OpenAI native Codex preparation preserves reviewed Responses fields", asyn
   const adapter = createOpenAICodexProviderAdapter({
     now: () => NOW,
     randomUUID: () => "131f4bad-a527-4b42-bbf7-4b4adf40079b",
+    clientVersion: fixedCodexClientVersion("0.157.0"),
   });
 
   assert.ok(adapter.prepareResponsesInference);
@@ -455,7 +457,10 @@ test("OpenAI native Codex preparation preserves reviewed Responses fields", asyn
 });
 
 test("OpenAI Codex search preparation uses the dedicated subscription endpoint", async () => {
-  const adapter = createOpenAICodexProviderAdapter({ now: () => NOW });
+  const adapter = createOpenAICodexProviderAdapter({
+    now: () => NOW,
+    clientVersion: fixedCodexClientVersion("0.157.0"),
+  });
 
   assert.ok(adapter.prepareSearch);
   const request: CodexSearchRequest = {

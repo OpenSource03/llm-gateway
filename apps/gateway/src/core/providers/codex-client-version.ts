@@ -18,7 +18,10 @@ const MAX_RESPONSE_BYTES = 64 * 1024;
 const SEMVER = /^(\d{1,4})\.(\d{1,4})\.(\d{1,4})$/;
 
 export interface CodexClientVersionSource {
-  /** The version to present now. Never waits for the network. */
+  /**
+   * The version to present now. Never waits for the network; starts a
+   * background lookup when one is due, so every process stays current.
+   */
   current(): string;
   /** Looks up the newest release when due, then returns the current version. */
   refresh(): Promise<string>;
@@ -32,21 +35,29 @@ const parseVersion = (value: string): [number, number, number] | null => {
 
 /**
  * Follow a newer release of the reviewed major version. A lower, malformed or
- * new-major version keeps the reviewed one: a major release may change the
- * wire contract this adapter reconstructs.
+ * new-major candidate keeps the current version: a major release may change
+ * the wire contract this adapter reconstructs, and going back could hide
+ * models already published for the newer client.
  */
 export const acceptedCodexClientVersion = (
   reviewed: string,
+  current: string,
   candidate: string,
 ): string => {
-  const floor = parseVersion(reviewed);
+  const major = parseVersion(reviewed)?.[0];
+  const active = parseVersion(current);
   const latest = parseVersion(candidate);
 
-  if (!floor || !latest || latest[0] !== floor[0]) return reviewed;
+  if (major === undefined || !active || !latest || latest[0] !== major) {
+    return current;
+  }
   const newer =
-    latest[1] > floor[1] || (latest[1] === floor[1] && latest[2] > floor[2]);
+    latest[0] > active[0] ||
+    (latest[0] === active[0] &&
+      (latest[1] > active[1] ||
+        (latest[1] === active[1] && latest[2] > active[2])));
 
-  return newer ? candidate : reviewed;
+  return newer ? candidate : current;
 };
 
 export const fixedCodexClientVersion = (
@@ -95,7 +106,7 @@ export const createCodexClientVersionSource = (options: {
           : "";
 
       if (!parseVersion(latest)) throw new Error("Malformed Codex release");
-      const next = acceptedCodexClientVersion(reviewed, latest);
+      const next = acceptedCodexClientVersion(reviewed, version, latest);
 
       if (next !== version) {
         Logger.info("Codex client version updated", {
@@ -113,15 +124,22 @@ export const createCodexClientVersionSource = (options: {
     return version;
   };
 
-  return {
-    current: () => version,
-    refresh() {
-      if (options.now() < nextLookupAt) return Promise.resolve(version);
-      inFlight ??= lookup().finally(() => {
-        inFlight = null;
-      });
+  const refresh = (): Promise<string> => {
+    if (options.now() < nextLookupAt) return Promise.resolve(version);
+    inFlight ??= lookup().finally(() => {
+      inFlight = null;
+    });
 
-      return inFlight;
+    return inFlight;
+  };
+
+  return {
+    current() {
+      // lookup() never rejects, so the background refresh cannot go unhandled.
+      void refresh();
+
+      return version;
     },
+    refresh,
   };
 };
